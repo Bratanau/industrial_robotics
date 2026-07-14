@@ -1,0 +1,66 @@
+# ==============================================
+# Unity generated — кеш и временные файлы
+# ==============================================
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# ==============================================
+# Автогенерируемые Unity/IDE файлы проекта
+# ==============================================
+ExportedObj/
+.consulo/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity meta для игнорируемых папок не нужны
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Unity crash reporter
+sysinfo.txt
+
+# ==============================================
+# Сборки
+# ==============================================
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Crashlytics
+crashlytics-build.properties
+
+# ==============================================
+# IDE
+# ==============================================
+.vs/
+.vscode/
+.idea/
+.vsconfig
+
+# ==============================================
+# ОС
+# ==============================================
+.DS_Store
+Thumbs.db
