@@ -18,25 +18,33 @@ public class GripperController : MonoBehaviour
     [Tooltip("VirtualSensors component providing the gripper IR reading")]
     public VirtualSensors sensors;
 
+    [Header("Debug")]
+    [Tooltip("Radius used only to draw the gizmo at holdPoint, purely visual")]
+    [SerializeField] private float grabSearchRadius = 0.05f;
+
     [Header("State")]
     [Tooltip("True while the claw is commanded to be closed")]
     public bool isClawClosed;
 
     /// <summary>True while the gripper is currently holding the ball.</summary>
-    public bool HasBall => heldBallRb != null;
+    public bool IsHolding => heldBallRb != null;
 
     private Rigidbody heldBallRb;
     private Collider heldBallCollider;
     private Transform heldBallOriginalParent;
 
-    /// <summary>
-    /// Call this to open/close the claw (e.g. from input or an AI action).
-    /// </summary>
-    public void SetClawClosed(bool closed)
+    /// <summary>Command the claw to close and attempt to grip the ball.</summary>
+    public void GripCommand()
     {
-        isClawClosed = closed;
+        isClawClosed = true;
+    }
 
-        if (!closed && heldBallRb != null)
+    /// <summary>Command the claw to open, releasing the ball if held.</summary>
+    public void ReleaseCommand()
+    {
+        isClawClosed = false;
+
+        if (heldBallRb != null)
         {
             ReleaseBall();
         }
@@ -54,35 +62,34 @@ public class GripperController : MonoBehaviour
     }
 
     /// <summary>
-    /// Finds the ball currently detected by the gripper IR sensor and switches
-    /// it into "logically held" mode: kinematic rigidbody, collider disabled,
-    /// parented to HoldPoint.
+    /// Uses the ball collider already detected by VirtualSensors' gripper IR
+    /// this frame and switches it into "logically held" mode: kinematic
+    /// rigidbody, collider disabled, parented to HoldPoint.
     /// </summary>
     private void TryGripBall()
     {
-        if (holdPoint == null || sensors.gripperIRPoint == null) return;
+        if (holdPoint == null) return;
 
-        if (Physics.Raycast(sensors.gripperIRPoint.position, sensors.gripperIRPoint.forward,
-                out RaycastHit hit, sensors.gripperIRRange, sensors.obstacleMask))
-        {
-            if (!hit.collider.CompareTag(sensors.ballTag)) return;
+        Collider ballCollider = sensors.GripperDetectedBall;
+        if (ballCollider == null) return;
 
-            heldBallRb = hit.collider.attachedRigidbody;
-            heldBallCollider = hit.collider;
+        Rigidbody ballRb = ballCollider.attachedRigidbody;
+        if (ballRb == null) return;
 
-            if (heldBallRb == null) return;
+        heldBallRb = ballRb;
+        heldBallCollider = ballCollider;
+        heldBallOriginalParent = heldBallRb.transform.parent;
 
-            heldBallOriginalParent = heldBallRb.transform.parent;
+        heldBallRb.isKinematic = true;
+        heldBallCollider.enabled = false;
 
-            heldBallRb.isKinematic = true;
-            heldBallCollider.enabled = false;
-
-        // Крепим к точке. worldPositionStays: true сохраняет мировой масштаб мяча,
+        // worldPositionStays: true сохраняет мировой масштаб мяча,
         // иначе он унаследует масштаб родителя (и раздуется/сожмётся).
-        ball.transform.SetParent(holdPoint, worldPositionStays: true);
-        // Затем принудительно телепортируем мяч в позицию HoldPoint, сохраняя размер.
-        ball.transform.position = holdPoint.position;
-        ball.transform.rotation = holdPoint.rotation;
+        heldBallRb.transform.SetParent(holdPoint, worldPositionStays: true);
+
+        // Затем принудительно телепортируем мяч в позицию HoldPoint.
+        heldBallRb.transform.position = holdPoint.position;
+        heldBallRb.transform.rotation = holdPoint.rotation;
     }
 
     /// <summary>

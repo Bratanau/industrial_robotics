@@ -30,8 +30,6 @@ public class VirtualSensors : MonoBehaviour
     [SerializeField] private float ultrasonicConeAngle = 30f;
     [Tooltip("Количество лучей в веере (нечётное — центральный + симметричные)")]
     [SerializeField] private int ultrasonicRayCount = 5;
-    [Tooltip("Тег объекта, который УЗ игнорирует (обычно мяч)")]
-    [SerializeField] private string ultrasonicIgnoreTag = "TargetBall";
 
     [Header("Настройки ИК препятствий")]
     [Tooltip("Дальность ИК препятствий, м (реальные ~15 см)")]
@@ -40,19 +38,16 @@ public class VirtualSensors : MonoBehaviour
     [Header("Настройки ИК клешни")]
     [Tooltip("Дальность ИК клешни, м (реальные ~7-8 см)")]
     [SerializeField] private float gripperIRDistance = 0.08f;
-    [Tooltip("Тег мяча, который ловит датчик клешни")]
-    [SerializeField] private string ballTag = "TargetBall";
 
     [Header("Layers / tags")]
+    [Tooltip("Слои, которые считаются препятствиями/стенами")]
     public LayerMask obstacleMask = ~0; // everything by default
+    [Tooltip("Тег мяча — УЗ его игнорирует, ИК клешни наоборот ищет именно его")]
     public string ballTag = "TargetBall";
 
-<<<<<<< HEAD
-    // --- Public read-only results, updated each frame ---
-    public float UltrasonicDistance01 { get; private set; } = 1f; // 0 = touching, 1 = clear
-    public int LeftIR { get; private set; }
-    public int RightIR { get; private set; }
-=======
+    [Header("Отладка")]
+    [SerializeField] private bool drawGizmos = true;
+
     // ---- Публичные показания датчиков ----
     /// <summary>Левый УЗ: 0 — вплотную, 1 — чисто.</summary>
     public float UltrasonicLeft { get; private set; } = 1f;
@@ -67,42 +62,32 @@ public class VirtualSensors : MonoBehaviour
     public int RightIR { get; private set; }
 
     /// <summary>1 если в клешне мяч, иначе 0.</summary>
->>>>>>> ade5866945b7458351b0d9a434b11a7a8c2180bb
     public int GripperIR { get; private set; }
+
+    /// <summary>Коллайдер мяча, обнаруженного ИК клешни на этом кадре (null, если мяча нет).</summary>
+    public Collider GripperDetectedBall { get; private set; }
 
     private void Update()
     {
-<<<<<<< HEAD
-        UltrasonicDistance01 = ReadUltrasonic();
-        LeftIR = ReadShortRangeIR(leftIRPoint, irObstacleRange, ignoreBall: false);
-        RightIR = ReadShortRangeIR(rightIRPoint, irObstacleRange, ignoreBall: false);
+        UltrasonicLeft = ReadUltrasonic(leftSuperSonic);
+        UltrasonicRight = ReadUltrasonic(rightSuperSonic);
+
+        LeftIR = ReadObstacleIR(leftIRPoint, irObstacleDistance);
+        CenterIR = ReadObstacleIR(centerIRPoint, irObstacleDistance);
+        RightIR = ReadObstacleIR(rightIRPoint, irObstacleDistance);
+
         GripperIR = ReadGripperIR();
     }
 
     /// <summary>
-    /// Casts a fan of rays across the ultrasonic cone, finds the closest hit
-    /// (ignoring the ball, since it's too small for real ultrasonic sensors to see),
-    /// and returns a normalized distance: 0 = obstacle right at the sensor, 1 = clear.
+    /// Веер лучей в конусе ultrasonicConeAngle, ищем ближайшее препятствие,
+    /// игнорируя мяч (реальный УЗ слишком грубый, чтобы его видеть).
     /// </summary>
-    private float ReadUltrasonic()
-=======
-        UltrasonicLeft  = ReadUltrasonic(leftSuperSonic);
-        UltrasonicRight = ReadUltrasonic(rightSuperSonic);
-
-        LeftIR   = ReadObstacleIR(leftIRPoint,   irObstacleDistance);
-        CenterIR = ReadObstacleIR(centerIRPoint, irObstacleDistance);
-        RightIR  = ReadObstacleIR(rightIRPoint,  irObstacleDistance);
-
-        GripperIR = ReadGripperIR();
-    }
-
-    // ---- УЗ: веер лучей, ищем минимум, игнорируя мяч ----
     private float ReadUltrasonic(Transform anchor)
->>>>>>> ade5866945b7458351b0d9a434b11a7a8c2180bb
     {
         if (anchor == null) return 1f;
 
-        float closestDistance = ultrasonicRange;
+        float closestDistance = ultrasonicMaxDistance;
         bool hitSomething = false;
 
         int rays = Mathf.Max(1, ultrasonicRayCount);
@@ -110,29 +95,20 @@ public class VirtualSensors : MonoBehaviour
 
         for (int i = 0; i < rays; i++)
         {
-<<<<<<< HEAD
-            float t = rays == 1 ? 0f : (float)i / (rays - 1); // 0..1
-            float angle = Mathf.Lerp(-halfAngle, halfAngle, t);
-
-            Vector3 direction = Quaternion.Euler(0f, angle, 0f) * centerPoint.forward;
-
-            if (Physics.Raycast(centerPoint.position, direction, out RaycastHit hit, ultrasonicRange, obstacleMask))
-=======
             float t = rays == 1 ? 0.5f : (float)i / (rays - 1);
-            float angle = Mathf.Lerp(-halfCone, halfCone, t);
+            float angle = Mathf.Lerp(-halfAngle, halfAngle, t);
 
             Vector3 dir = Quaternion.AngleAxis(angle, anchor.up) * anchor.forward;
 
-            // RaycastAll, чтобы можно было пропустить мяч и упереться в стену за ним
-            RaycastHit[] hits = Physics.RaycastAll(anchor.position, dir, ultrasonicMaxDistance);
+            // RaycastAll, чтобы можно было пропустить мяч и упереться в стену за ним.
+            RaycastHit[] hits = Physics.RaycastAll(anchor.position, dir, ultrasonicMaxDistance, obstacleMask);
             System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
 
             foreach (var hit in hits)
->>>>>>> ade5866945b7458351b0d9a434b11a7a8c2180bb
             {
                 if (hit.collider.CompareTag(ballTag))
                 {
-                    continue; // ultrasonic can't reliably see the small ball, ignore it
+                    continue; // ультразвук не видит маленький мяч
                 }
 
                 hitSomething = true;
@@ -140,6 +116,7 @@ public class VirtualSensors : MonoBehaviour
                 {
                     closestDistance = hit.distance;
                 }
+                break; // первое непустое попадание после фильтрации мяча — уже ближайшее
             }
         }
 
@@ -148,23 +125,19 @@ public class VirtualSensors : MonoBehaviour
             return 1f;
         }
 
-        return Mathf.Clamp01(closestDistance / ultrasonicRange);
+        return Mathf.Clamp01(closestDistance / ultrasonicMaxDistance);
     }
 
     /// <summary>
-    /// Single short raycast used for the left/right IR obstacle sensors.
-    /// Returns 1 if a wall/obstacle is detected within range, 0 otherwise.
+    /// Одиночный короткий луч для ИК-датчиков препятствий.
+    /// Возвращает 1, если стена обнаружена в пределах range, иначе 0.
     /// </summary>
-    private int ReadShortRangeIR(Transform origin, float range, bool ignoreBall)
+    private int ReadObstacleIR(Transform origin, float range)
     {
         if (origin == null) return 0;
 
         if (Physics.Raycast(origin.position, origin.forward, out RaycastHit hit, range, obstacleMask))
         {
-            if (ignoreBall && hit.collider.CompareTag(ballTag))
-            {
-                return 0;
-            }
             return 1;
         }
 
@@ -172,27 +145,27 @@ public class VirtualSensors : MonoBehaviour
     }
 
     /// <summary>
-    /// Detects the target ball at close range inside the gripper.
-    /// Returns 1 if the ball is present within gripperIRRange, 0 otherwise.
+    /// Детектирует мяч на близкой дистанции внутри клешни.
+    /// Возвращает 1, если мяч (по тегу) обнаружен в пределах gripperIRDistance, иначе 0.
     /// </summary>
     private int ReadGripperIR()
     {
-        if (gripperIRPoint == null) return 0;
-
-        if (Physics.Raycast(gripperIRPoint.position, gripperIRPoint.forward, out RaycastHit hit, gripperIRRange, obstacleMask))
+        if (gripperIRPoint == null)
         {
-<<<<<<< HEAD
+            GripperDetectedBall = null;
+            return 0;
+        }
+
+        if (Physics.Raycast(gripperIRPoint.position, gripperIRPoint.forward, out RaycastHit hit, gripperIRDistance, obstacleMask))
+        {
             if (hit.collider.CompareTag(ballTag))
             {
+                GripperDetectedBall = hit.collider;
                 return 1;
             }
         }
 
-        return 0;
-    }
-=======
-            if (hit.collider.CompareTag(ballTag)) return 1;
-        }
+        GripperDetectedBall = null;
         return 0;
     }
 
@@ -208,9 +181,9 @@ public class VirtualSensors : MonoBehaviour
 
         // ИК препятствий
         Gizmos.color = Color.yellow;
-        if (leftIRPoint   != null) Gizmos.DrawRay(leftIRPoint.position,   leftIRPoint.forward   * irObstacleDistance);
+        if (leftIRPoint != null) Gizmos.DrawRay(leftIRPoint.position, leftIRPoint.forward * irObstacleDistance);
         if (centerIRPoint != null) Gizmos.DrawRay(centerIRPoint.position, centerIRPoint.forward * irObstacleDistance);
-        if (rightIRPoint  != null) Gizmos.DrawRay(rightIRPoint.position,  rightIRPoint.forward  * irObstacleDistance);
+        if (rightIRPoint != null) Gizmos.DrawRay(rightIRPoint.position, rightIRPoint.forward * irObstacleDistance);
 
         // ИК клешни
         Gizmos.color = Color.magenta;
@@ -231,5 +204,4 @@ public class VirtualSensors : MonoBehaviour
             Gizmos.DrawRay(anchor.position, dir * ultrasonicMaxDistance);
         }
     }
->>>>>>> ade5866945b7458351b0d9a434b11a7a8c2180bb
 }

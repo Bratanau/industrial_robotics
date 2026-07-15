@@ -256,10 +256,7 @@ GameObject:
   - component: {fileID: 8099579368565758372}
   - component: {fileID: 5391371520141763513}
   - component: {fileID: 3486562148315858876}
-  - component: {fileID: 4097850925240880610}
   - component: {fileID: 2537734585754527380}
-  - component: {fileID: 5577646832673672813}
-  - component: {fileID: 4464101698329577083}
   m_Layer: 0
   m_Name: robot
   m_TagString: Untagged
@@ -376,28 +373,13 @@ MonoBehaviour:
   ultrasonicMaxDistance: 2
   ultrasonicConeAngle: 30
   ultrasonicRayCount: 5
-  ultrasonicIgnoreTag: TargetBall
   irObstacleDistance: 0.15
   gripperIRDistance: 0.08
+  obstacleMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
   ballTag: TargetBall
   drawGizmos: 1
---- !u!114 &4097850925240880610
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2172756444253582897}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ed29bfac2ea6c7b41b27a965b3f5110c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::SizeInspector
-  source: 2
-  drawGizmo: 1
-  rendererSize: {x: 0.07825429, y: 0.08294005, z: 0.10149376}
-  colliderSize: {x: 0.27331233, y: 0.27620244, z: 0.33333015}
-  worldScale: {x: 0.10000001, y: 0.1, z: 0.10000001}
 --- !u!114 &2537734585754527380
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -429,37 +411,6 @@ MonoBehaviour:
   m_UseChildActuators: 1
   m_DeterministicInference: 0
   m_ObservableAttributeHandling: 0
---- !u!114 &5577646832673672813
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2172756444253582897}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 88b6042bc9a5d4aa58d931eae49442e5, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.ML-Agents::Unity.MLAgents.Agent
-  agentParameters:
-    maxStep: 0
-  hasUpgradedFromAgentParameters: 1
-  MaxStep: 0
---- !u!114 &4464101698329577083
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2172756444253582897}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3a5c9d521e5ef4759a8246a07d52221e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.ML-Agents::Unity.MLAgents.DecisionRequester
-  DecisionPeriod: 5
-  DecisionStep: 0
-  TakeActionsBetweenDecisions: 1
 --- !u!1 &5899532478199072669
 GameObject:
   m_ObjectHideFlags: 0
@@ -1118,11 +1069,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7a4478bc32c7fbe49bf45f3465dac3ae, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GripperController
-  sensors: {fileID: 3486562148315858876}
   holdPoint: {fileID: 2138729750986840891}
-  ballTag: TargetBall
+  sensors: {fileID: 3486562148315858876}
   grabSearchRadius: 0.15
-  gripKey: 32
+  isClawClosed: 0
 --- !u!4 &6900765699354817028 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 5989947615733776529, guid: 87fdc3ece8b6ffe4eb341cd9b86bef94, type: 3}

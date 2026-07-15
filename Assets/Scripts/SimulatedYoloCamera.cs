@@ -133,23 +133,6 @@ public class SimulatedYoloCamera : MonoBehaviour
 
     private void OnDrawGizmosSelected()
     {
-<<<<<<< HEAD
-        // Visualize the horizontal FOV cone in the Scene view for easier tuning.
-        if (cam == null) cam = GetComponent<Camera>();
-        if (cam == null) return;
-
-        Gizmos.color = Color.yellow;
-        Vector3 origin = cam.transform.position;
-        Quaternion leftRot = Quaternion.AngleAxis(-hFov * 0.5f, Vector3.up);
-        Quaternion rightRot = Quaternion.AngleAxis(hFov * 0.5f, Vector3.up);
-
-        Vector3 leftDir = leftRot * cam.transform.forward;
-        Vector3 rightDir = rightRot * cam.transform.forward;
-
-        Gizmos.DrawLine(origin, origin + leftDir * maxViewDistance);
-        Gizmos.DrawLine(origin, origin + rightDir * maxViewDistance);
-        Gizmos.DrawLine(origin, origin + cam.transform.forward * maxViewDistance);
-=======
         if (!drawGizmos || cam == null) return;
 
         Gizmos.color = IsVisible ? Color.green : new Color(1f, 1f, 1f, 0.5f);
@@ -169,6 +152,5 @@ public class SimulatedYoloCamera : MonoBehaviour
             Gizmos.color = Color.red;
             Gizmos.DrawLine(origin, targetBall.position);
         }
->>>>>>> ade5866945b7458351b0d9a434b11a7a8c2180bb
     }
 }
