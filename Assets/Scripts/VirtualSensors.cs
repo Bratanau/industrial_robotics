@@ -1,153 +1,134 @@
 using UnityEngine;
 
 /// <summary>
-/// Симуляция сенсоров робота через Physics.Raycast.
-/// - Ультразвуковой датчик: веер лучей в конусе ~30°, минимальная дистанция, игнор мяча.
-/// - ИК датчики препятствий (слева/справа): короткий луч, 1 если стена рядом, 0 если пусто.
-/// - ИК датчик клешни: короткий луч внутрь захвата, реагирует только на объект с тегом мяча.
-/// Все лучи стреляют по локальной оси forward соответствующей точки-якоря —
-/// поэтому просто разверни каждую точку в редакторе так, чтобы её синяя стрелка
-/// смотрела туда, куда должен «смотреть» датчик.
+/// Simulates the robot's onboard sensors using Physics raycasts:
+///  - one ultrasonic sensor (fan of rays, ~30 deg cone, ignores the target ball)
+///  - two short-range IR obstacle sensors (left / right, binary output)
+///  - one IR sensor inside the gripper (detects the target ball at close range)
 /// </summary>
 public class VirtualSensors : MonoBehaviour
 {
-    [Header("Точки-якоря (Empty GameObject'ы на роботе)")]
-    [SerializeField] private Transform centerPoint;      // УЗ, смотрит вперёд
-    [SerializeField] private Transform leftIRPoint;      // ИК, смотрит влево
-    [SerializeField] private Transform rightIRPoint;     // ИК, смотрит вправо
-    [SerializeField] private Transform gripperIRPoint;   // ИК, внутрь клешни
+    [Header("Sensor anchor points")]
+    public Transform centerPoint;     // faces forward - ultrasonic sensor
+    public Transform leftIRPoint;     // faces left - IR obstacle sensor
+    public Transform rightIRPoint;    // faces right - IR obstacle sensor
+    public Transform gripperIRPoint;  // faces into the claw - IR ball sensor
 
-    [Header("Ультразвук")]
-    [Tooltip("Максимальная дистанция УЗ, м")]
-    [SerializeField] private float ultrasonicMaxDistance = 2.0f;
-    [Tooltip("Полный угол конуса обзора, градусов")]
-    [SerializeField] private float ultrasonicConeAngle = 30f;
-    [Tooltip("Количество лучей в веере (нечётное — центральный + симметричные)")]
-    [SerializeField] private int ultrasonicRayCount = 5;
-    [Tooltip("Тег объекта, который УЗ игнорирует (обычно мяч)")]
-    [SerializeField] private string ultrasonicIgnoreTag = "TargetBall";
+    [Header("Ultrasonic sensor")]
+    [Tooltip("Max detection range, meters")]
+    public float ultrasonicRange = 2.0f;
+    [Tooltip("Full cone angle, degrees (rays are cast across this fan)")]
+    public float ultrasonicConeAngle = 30f;
+    [Tooltip("Number of rays cast across the cone")]
+    public int ultrasonicRayCount = 5;
 
-    [Header("ИК препятствий (лево/право)")]
-    [Tooltip("Дальность ИК препятствий, м (реальные ~15 см)")]
-    [SerializeField] private float irObstacleDistance = 0.15f;
+    [Header("IR obstacle sensors")]
+    [Tooltip("Detection range for short-range wall sensors, meters")]
+    public float irObstacleRange = 0.15f;
 
-    [Header("ИК клешни")]
-    [Tooltip("Дальность ИК клешни, м (реальные ~7-8 см)")]
-    [SerializeField] private float gripperIRDistance = 0.08f;
-    [Tooltip("Тег мяча, который ловит датчик клешни")]
-    [SerializeField] private string ballTag = "TargetBall";
+    [Header("Gripper IR sensor")]
+    [Tooltip("Detection range for the ball inside the claw, meters")]
+    public float gripperIRRange = 0.08f;
 
-    [Header("Отладка")]
-    [SerializeField] private bool drawGizmos = true;
+    [Header("Layers / tags")]
+    public LayerMask obstacleMask = ~0; // everything by default
+    public string ballTag = "TargetBall";
 
-    // ---- Публичные показания датчиков ----
-    /// <summary>Нормализованное расстояние: 0 — вплотную к препятствию, 1 — чисто.</summary>
-    public float Ultrasonic { get; private set; } = 1f;
-    /// <summary>1 если слева близко стена, иначе 0.</summary>
+    // --- Public read-only results, updated each frame ---
+    public float UltrasonicDistance01 { get; private set; } = 1f; // 0 = touching, 1 = clear
     public int LeftIR { get; private set; }
-    /// <summary>1 если справа близко стена, иначе 0.</summary>
     public int RightIR { get; private set; }
-    /// <summary>1 если в клешне мяч, иначе 0.</summary>
     public int GripperIR { get; private set; }
 
-    private void FixedUpdate()
+    private void Update()
     {
-        Ultrasonic = ReadUltrasonic();
-        LeftIR = ReadObstacleIR(leftIRPoint, irObstacleDistance);
-        RightIR = ReadObstacleIR(rightIRPoint, irObstacleDistance);
+        UltrasonicDistance01 = ReadUltrasonic();
+        LeftIR = ReadShortRangeIR(leftIRPoint, irObstacleRange, ignoreBall: false);
+        RightIR = ReadShortRangeIR(rightIRPoint, irObstacleRange, ignoreBall: false);
         GripperIR = ReadGripperIR();
     }
 
-    // ---- УЗ: веер лучей, ищем минимум, игнорируя мяч ----
+    /// <summary>
+    /// Casts a fan of rays across the ultrasonic cone, finds the closest hit
+    /// (ignoring the ball, since it's too small for real ultrasonic sensors to see),
+    /// and returns a normalized distance: 0 = obstacle right at the sensor, 1 = clear.
+    /// </summary>
     private float ReadUltrasonic()
     {
         if (centerPoint == null) return 1f;
 
-        float minDistance = ultrasonicMaxDistance;
+        float closestDistance = ultrasonicRange;
+        bool hitSomething = false;
+
         int rays = Mathf.Max(1, ultrasonicRayCount);
-        float halfCone = ultrasonicConeAngle * 0.5f;
+        float halfAngle = ultrasonicConeAngle * 0.5f;
 
         for (int i = 0; i < rays; i++)
         {
-            // равномерно распределяем углы от -halfCone до +halfCone
-            float t = rays == 1 ? 0.5f : (float)i / (rays - 1);
-            float angle = Mathf.Lerp(-halfCone, halfCone, t);
+            float t = rays == 1 ? 0f : (float)i / (rays - 1); // 0..1
+            float angle = Mathf.Lerp(-halfAngle, halfAngle, t);
 
-            Vector3 dir = Quaternion.AngleAxis(angle, centerPoint.up) * centerPoint.forward;
+            Vector3 direction = Quaternion.Euler(0f, angle, 0f) * centerPoint.forward;
 
-            // RaycastAll, чтобы можно было пропустить мяч и упереться в стену за ним
-            RaycastHit[] hits = Physics.RaycastAll(centerPoint.position, dir, ultrasonicMaxDistance);
-            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-
-            foreach (var hit in hits)
+            if (Physics.Raycast(centerPoint.position, direction, out RaycastHit hit, ultrasonicRange, obstacleMask))
             {
-                if (!string.IsNullOrEmpty(ultrasonicIgnoreTag) && hit.collider.CompareTag(ultrasonicIgnoreTag))
-                    continue;
-                // не считаем самого себя (если коллайдеры робота попали в луч)
-                if (hit.collider.transform.IsChildOf(transform)) continue;
+                if (hit.collider.CompareTag(ballTag))
+                {
+                    continue; // ultrasonic can't reliably see the small ball, ignore it
+                }
 
-                if (hit.distance < minDistance) minDistance = hit.distance;
-                break; // ближайший подходящий — берём его
+                hitSomething = true;
+                if (hit.distance < closestDistance)
+                {
+                    closestDistance = hit.distance;
+                }
             }
         }
 
-        // 0 (вплотную) .. 1 (чисто)
-        return Mathf.Clamp01(minDistance / ultrasonicMaxDistance);
+        if (!hitSomething)
+        {
+            return 1f;
+        }
+
+        return Mathf.Clamp01(closestDistance / ultrasonicRange);
     }
 
-    // ---- Короткий ИК: 1 если что-то ближе distance, 0 если пусто ----
-    private int ReadObstacleIR(Transform anchor, float distance)
+    /// <summary>
+    /// Single short raycast used for the left/right IR obstacle sensors.
+    /// Returns 1 if a wall/obstacle is detected within range, 0 otherwise.
+    /// </summary>
+    private int ReadShortRangeIR(Transform origin, float range, bool ignoreBall)
     {
-        if (anchor == null) return 0;
+        if (origin == null) return 0;
 
-        if (Physics.Raycast(anchor.position, anchor.forward, out RaycastHit hit, distance))
+        if (Physics.Raycast(origin.position, origin.forward, out RaycastHit hit, range, obstacleMask))
         {
-            if (hit.collider.transform.IsChildOf(transform)) return 0; // не считаем себя
+            if (ignoreBall && hit.collider.CompareTag(ballTag))
+            {
+                return 0;
+            }
             return 1;
         }
+
         return 0;
     }
 
-    // ---- ИК клешни: 1 только если попал по мячу ----
+    /// <summary>
+    /// Detects the target ball at close range inside the gripper.
+    /// Returns 1 if the ball is present within gripperIRRange, 0 otherwise.
+    /// </summary>
     private int ReadGripperIR()
     {
         if (gripperIRPoint == null) return 0;
 
-        RaycastHit[] hits = Physics.RaycastAll(gripperIRPoint.position, gripperIRPoint.forward, gripperIRDistance);
-        foreach (var hit in hits)
+        if (Physics.Raycast(gripperIRPoint.position, gripperIRPoint.forward, out RaycastHit hit, gripperIRRange, obstacleMask))
         {
-            if (hit.collider.CompareTag(ballTag)) return 1;
-        }
-        return 0;
-    }
-
-    // ---- Визуализация в редакторе ----
-    private void OnDrawGizmos()
-    {
-        if (!drawGizmos) return;
-
-        // УЗ конус
-        if (centerPoint != null)
-        {
-            Gizmos.color = Color.cyan;
-            int rays = Mathf.Max(1, ultrasonicRayCount);
-            float halfCone = ultrasonicConeAngle * 0.5f;
-            for (int i = 0; i < rays; i++)
+            if (hit.collider.CompareTag(ballTag))
             {
-                float t = rays == 1 ? 0.5f : (float)i / (rays - 1);
-                float angle = Mathf.Lerp(-halfCone, halfCone, t);
-                Vector3 dir = Quaternion.AngleAxis(angle, centerPoint.up) * centerPoint.forward;
-                Gizmos.DrawRay(centerPoint.position, dir * ultrasonicMaxDistance);
+                return 1;
             }
         }
 
-        // ИК препятствий
-        Gizmos.color = Color.yellow;
-        if (leftIRPoint != null)  Gizmos.DrawRay(leftIRPoint.position,  leftIRPoint.forward  * irObstacleDistance);
-        if (rightIRPoint != null) Gizmos.DrawRay(rightIRPoint.position, rightIRPoint.forward * irObstacleDistance);
-
-        // ИК клешни
-        Gizmos.color = Color.magenta;
-        if (gripperIRPoint != null) Gizmos.DrawRay(gripperIRPoint.position, gripperIRPoint.forward * gripperIRDistance);
+        return 0;
     }
 }

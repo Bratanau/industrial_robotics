@@ -1,144 +1,102 @@
 using UnityEngine;
 
 /// <summary>
-/// Логический захват мяча клешнёй.
-/// Когда VirtualSensors.GripperIR == 1 и игрок жмёт кнопку захвата, мяч:
-///   - становится kinematic (не считается физикой),
-///   - его коллайдер выключается,
-///   - он делается дочерним объектом HoldPoint (SetParent), локальная позиция обнуляется.
-/// При отпускании — всё восстанавливается в исходное состояние.
+/// Controls the robot's claw/gripper.
+/// Since physically holding a round object with rigid jaws is unreliable in
+/// a physics simulation (the ball slips or is ejected due to friction solver
+/// inaccuracies), this uses a "logical grip": when the gripper IR sensor
+/// detects the ball, physics is disabled for it and it is parented to a
+/// HoldPoint, so it moves rigidly with the claw. Opening the claw restores
+/// normal physics.
 /// </summary>
 public class GripperController : MonoBehaviour
 {
-    [Header("Ссылки")]
-    [Tooltip("Скрипт сенсоров робота — обычно висит на корне робота")]
-    [SerializeField] private VirtualSensors sensors;
+    [Header("References")]
+    [Tooltip("Empty transform positioned between the claw's jaws")]
+    public Transform holdPoint;
 
-    [Tooltip("Пустой дочерний объект между губками клешни")]
-    [SerializeField] private Transform holdPoint;
+    [Tooltip("VirtualSensors component providing the gripper IR reading")]
+    public VirtualSensors sensors;
 
-    [Header("Настройки поиска мяча")]
-    [Tooltip("Тег мяча")]
-    [SerializeField] private string ballTag = "TargetBall";
+    [Header("State")]
+    [Tooltip("True while the claw is commanded to be closed")]
+    public bool isClawClosed;
 
-    [Tooltip("Радиус поиска мяча вокруг HoldPoint при попытке захвата, м")]
-    [SerializeField] private float grabSearchRadius = 0.15f;
+    /// <summary>True while the gripper is currently holding the ball.</summary>
+    public bool HasBall => heldBallRb != null;
 
-    [Header("Управление")]
-    [Tooltip("Клавиша схватить / отпустить")]
-    [SerializeField] private KeyCode gripKey = KeyCode.Space;
+    private Rigidbody heldBallRb;
+    private Collider heldBallCollider;
+    private Transform heldBallOriginalParent;
 
-    // ---- Состояние ----
-    private GameObject heldBall;
-    private Rigidbody heldRb;
-    private Collider heldCol;
-    private Transform heldOriginalParent;
-    private bool wasKinematic;
-    private bool wasColliderEnabled;
+    /// <summary>
+    /// Call this to open/close the claw (e.g. from input or an AI action).
+    /// </summary>
+    public void SetClawClosed(bool closed)
+    {
+        isClawClosed = closed;
 
-    /// <summary>Держит ли клешня сейчас мяч.</summary>
-    public bool IsHolding => heldBall != null;
+        if (!closed && heldBallRb != null)
+        {
+            ReleaseBall();
+        }
+    }
 
     private void Update()
     {
-        if (Input.GetKeyDown(gripKey))
+        if (sensors == null) return;
+
+        // Try to grip when the claw is closed and the gripper IR sees the ball.
+        if (isClawClosed && heldBallRb == null && sensors.GripperIR == 1)
         {
-            if (IsHolding) Release();
-            else TryGrip();
+            TryGripBall();
         }
     }
 
-    // ---- Внешний API, если управляешь из другого скрипта / нейросети ----
-    public void GripCommand()
+    /// <summary>
+    /// Finds the ball currently detected by the gripper IR sensor and switches
+    /// it into "logically held" mode: kinematic rigidbody, collider disabled,
+    /// parented to HoldPoint.
+    /// </summary>
+    private void TryGripBall()
     {
-        if (!IsHolding) TryGrip();
+        if (holdPoint == null || sensors.gripperIRPoint == null) return;
+
+        if (Physics.Raycast(sensors.gripperIRPoint.position, sensors.gripperIRPoint.forward,
+                out RaycastHit hit, sensors.gripperIRRange, sensors.obstacleMask))
+        {
+            if (!hit.collider.CompareTag(sensors.ballTag)) return;
+
+            heldBallRb = hit.collider.attachedRigidbody;
+            heldBallCollider = hit.collider;
+
+            if (heldBallRb == null) return;
+
+            heldBallOriginalParent = heldBallRb.transform.parent;
+
+            heldBallRb.isKinematic = true;
+            heldBallCollider.enabled = false;
+
+            heldBallRb.transform.SetParent(holdPoint);
+            heldBallRb.transform.localPosition = Vector3.zero;
+            heldBallRb.transform.localRotation = Quaternion.identity;
+        }
     }
 
-    public void ReleaseCommand()
+    /// <summary>
+    /// Restores the held ball's physics and re-parents it back to the world.
+    /// </summary>
+    private void ReleaseBall()
     {
-        if (IsHolding) Release();
-    }
+        if (heldBallRb == null) return;
 
-    // ---- Логика ----
-    private void TryGrip()
-    {
-        if (holdPoint == null)
-        {
-            Debug.LogWarning("[GripperController] HoldPoint не назначен.");
-            return;
-        }
-        if (sensors == null)
-        {
-            Debug.LogWarning("[GripperController] Ссылка на VirtualSensors не назначена.");
-            return;
-        }
-        if (sensors.GripperIR == 0) return; // мяча в клешне нет
+        heldBallRb.transform.SetParent(heldBallOriginalParent);
 
-        // Ищем ближайший мяч в радиусе вокруг HoldPoint
-        Collider[] hits = Physics.OverlapSphere(holdPoint.position, grabSearchRadius);
-        GameObject closest = null;
-        float closestSqr = float.MaxValue;
+        heldBallCollider.enabled = true;
+        heldBallRb.isKinematic = false;
 
-        foreach (var c in hits)
-        {
-            if (!c.CompareTag(ballTag)) continue;
-            float d = (c.transform.position - holdPoint.position).sqrMagnitude;
-            if (d < closestSqr)
-            {
-                closestSqr = d;
-                closest = c.gameObject;
-            }
-        }
-
-        if (closest != null) Attach(closest);
-    }
-
-    private void Attach(GameObject ball)
-    {
-        heldBall = ball;
-        heldRb = ball.GetComponent<Rigidbody>();
-        heldCol = ball.GetComponent<Collider>();
-        heldOriginalParent = ball.transform.parent;
-
-        // Запоминаем и переключаем физику
-        if (heldRb != null)
-        {
-            wasKinematic = heldRb.isKinematic;
-            heldRb.linearVelocity = Vector3.zero;   // в Unity < 6 — velocity
-            heldRb.angularVelocity = Vector3.zero;
-            heldRb.isKinematic = true;
-        }
-        if (heldCol != null)
-        {
-            wasColliderEnabled = heldCol.enabled;
-            heldCol.enabled = false;
-        }
-
-        // Крепим к точке
-        ball.transform.SetParent(holdPoint, worldPositionStays: false);
-        ball.transform.localPosition = Vector3.zero;
-        ball.transform.localRotation = Quaternion.identity;
-    }
-
-    private void Release()
-    {
-        if (heldBall == null) return;
-
-        heldBall.transform.SetParent(heldOriginalParent, worldPositionStays: true);
-
-        if (heldCol != null) heldCol.enabled = wasColliderEnabled;
-        if (heldRb != null) heldRb.isKinematic = wasKinematic;
-
-        heldBall = null;
-        heldRb = null;
-        heldCol = null;
-        heldOriginalParent = null;
-    }
-
-    private void OnDrawGizmosSelected()
-    {
-        if (holdPoint == null) return;
-        Gizmos.color = Color.green;
-        Gizmos.DrawWireSphere(holdPoint.position, grabSearchRadius);
+        heldBallRb = null;
+        heldBallCollider = null;
+        heldBallOriginalParent = null;
     }
 }
