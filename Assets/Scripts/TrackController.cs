@@ -140,4 +140,11 @@ public class TrackController : MonoBehaviour
         gas   = Mathf.Clamp(gasCmd,   -1f, 1f);
         steer = Mathf.Clamp(steerCmd, -1f, 1f);
     }
+
+    /// <summary>External setter for Domain Randomization (Practice 5).</summary>
+    public void SetMotorParams(float newMoveSpeed, float newTurnSpeed)
+    {
+        moveSpeed = newMoveSpeed;
+        turnSpeed = newTurnSpeed;
+    }
 }
