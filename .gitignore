@@ -105,3 +105,9 @@ InitTestScene*.unity*
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
 Assets/ML-Agents/Timers/
+
+Build_Linux*/
+results/
+cloud_package/
+*.zip
+Assets/ML-Agents/Timers/
