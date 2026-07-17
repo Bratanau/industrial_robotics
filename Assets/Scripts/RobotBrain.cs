@@ -74,6 +74,8 @@ public class RobotBrain : Agent
     [SerializeField] private float nearBoost = 2.0f;        // multiplier when close to ball
     [SerializeField] private float centerReward = 0.003f;   // for centering camera/body on ball
     [SerializeField] private float actionRatePenalty = 0.005f;
+    [Tooltip("Penalty each time the gripper COMMAND changes (0/1/2). Stops the policy from chattering the claw servo, which wears the real hardware")]
+    [SerializeField] private float gripChatterPenalty = 0.01f;
     [SerializeField] private float wallPenalty = 0.02f;
     [SerializeField] private float stepPenalty = 0.0005f;
     [SerializeField] private float reversePenalty = 0.004f; // penalty per step for driving backwards
@@ -92,6 +94,8 @@ public class RobotBrain : Agent
     [Header("Observation normalization")]
     [SerializeField] private float maxSpeed = 0.8f;         // m/s of the real GFS-X
     [SerializeField] private float timeSinceBallCap = 10f;  // s
+    [Tooltip("Real GFS-X has no wheel encoders, so dX/dZ odometry (obs 11-12) does not exist on hardware. ON = feed zeros instead (train the policy to live without odometry before Sim2Real)")]
+    [SerializeField] private bool zeroOdometry = false;
 
     // ---- Rigidbody / start poses ----
     private Rigidbody rb;
@@ -106,6 +110,7 @@ public class RobotBrain : Agent
     private float timeSinceBall;
     private float prevWorldDistance;
     private float prevGas, prevSteer;
+    private int prevGrip;
     private int episodeSteps;
     private int holdCounter;
 
@@ -243,6 +248,7 @@ public class RobotBrain : Agent
         lastKnownBallAngle = 0f;
         timeSinceBall = timeSinceBallCap;
         prevGas = prevSteer = 0f;
+        prevGrip = 0;
         holdCounter = 0;
         prevWorldDistance = FlatDistanceToBall();
 
@@ -293,10 +299,19 @@ public class RobotBrain : Agent
         // 10. Are we holding the ball
         Obs10_HasBall = (gripper != null && gripper.IsHolding) ? 1f : 0f;
 
-        // 11-12. Offset from start
-        Vector3 d = transform.position - startPos;
-        Obs11_DxNorm = Mathf.Clamp(d.x / arenaHalf, -1f, 1f);
-        Obs12_DzNorm = Mathf.Clamp(d.z / arenaHalf, -1f, 1f);
+        // 11-12. Offset from start (odometry). Real GFS-X has no encoders,
+        // so with zeroOdometry ON the policy learns to work without it.
+        if (zeroOdometry)
+        {
+            Obs11_DxNorm = 0f;
+            Obs12_DzNorm = 0f;
+        }
+        else
+        {
+            Vector3 d = transform.position - startPos;
+            Obs11_DxNorm = Mathf.Clamp(d.x / arenaHalf, -1f, 1f);
+            Obs12_DzNorm = Mathf.Clamp(d.z / arenaHalf, -1f, 1f);
+        }
 
         // 13. Robot heading (-1..1)
         float heading = transform.eulerAngles.y;
@@ -368,11 +383,17 @@ public class RobotBrain : Agent
         // Drive (SetCommand clamps to [-1,1] itself)
         if (track != null) track.SetCommand(gas, steer);
 
-        // Camera pan
+        // Camera pan: rotate around the WORLD vertical axis (robust to any
+        // tilted parent hierarchy in the imported model - guarantees the pan
+        // is left/right, never up/down)
         servoAngle = Mathf.Clamp(servoAngle + camCmd * servoSpeed * Time.fixedDeltaTime,
                                  -maxServoAngle, maxServoAngle);
         if (cameraServo != null)
-            cameraServo.localRotation = cameraServoBase * Quaternion.Euler(0f, servoAngle, 0f);
+            cameraServo.localRotation = cameraServoBase *
+                Quaternion.AngleAxis(servoAngle,
+                    cameraServo.parent != null
+                        ? cameraServo.parent.InverseTransformDirection(Vector3.up)
+                        : Vector3.up);
 
         // Gripper
         if (gripper != null)
@@ -415,6 +436,11 @@ public class RobotBrain : Agent
 
         // 4. Action Rate Penalty: discourage jerky motor commands.
         Add(-actionRatePenalty * (Mathf.Abs(gas - prevGas) + Mathf.Abs(steer - prevSteer)));
+
+        // 4b. Gripper chatter: penalize CHANGING the claw command (not holding it).
+        if (ActGripCmd != prevGrip)
+            Add(-gripChatterPenalty);
+        prevGrip = ActGripCmd;
 
         // 5. Reverse penalty: small cost for driving backwards without need.
         if (gas < 0f)

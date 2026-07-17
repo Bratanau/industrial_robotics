@@ -620,7 +620,7 @@ BoxCollider:
   m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 2}
-  m_Center: {x: 2.25, y: 0.5, z: 0}
+  m_Center: {x: 2.5, y: 0.5, z: 0}
 --- !u!1 &1000980736018619082
 GameObject:
   m_ObjectHideFlags: 0
@@ -2616,8 +2616,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 3, y: 3, z: 2}
-  m_Center: {x: 0, y: 1.5, z: 0}
+  m_Size: {x: 3.7, y: 3, z: 3.3}
+  m_Center: {x: 0.15, y: 1.5, z: 0}
 --- !u!1 &4715408630501139221
 GameObject:
   m_ObjectHideFlags: 0
@@ -3467,6 +3467,7 @@ MonoBehaviour:
   nearBoost: 2
   centerReward: 0.003
   actionRatePenalty: 0.005
+  gripChatterPenalty: 0.01
   wallPenalty: 0.02
   stepPenalty: 0.0001
   reversePenalty: 0.004
@@ -3479,6 +3480,7 @@ MonoBehaviour:
   ballBumpPenalty: 0.05
   maxSpeed: 0.8
   timeSinceBallCap: 10
+  zeroOdometry: 1
 --- !u!114 &4484566737087193382
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3972,7 +3974,7 @@ Camera:
   m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
-  m_FOVAxisMode: 0
+  m_FOVAxisMode: 1
   m_Iso: 200
   m_ShutterSpeed: 0.005
   m_Aperture: 16
