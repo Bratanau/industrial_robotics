@@ -25,6 +25,8 @@ public class RobotBrain : Agent
     [SerializeField] private TrackController track;
     [SerializeField] private VirtualSensors sensors;
     [SerializeField] private SimulatedYoloCamera yolo;
+    [Tooltip("Practice 7 (HIL): optional real-YOLO receiver. When assigned AND its useYOLO is ON, vision comes from the real robot instead of the simulated camera")]
+    [SerializeField] private RealVision realVision;
     [SerializeField] private GripperController gripper;
 
     [Header("Domain Randomization (optional)")]
@@ -63,6 +65,8 @@ public class RobotBrain : Agent
     [Header("Episode")]
     [Tooltip("Hard cap on decision steps per episode. Guarantees the episode always resets.")]
     [SerializeField] private int maxEpisodeSteps = 4000;
+    [Tooltip("MISSION MODE (Practice 7): for inference demos with the state machine. Disables all teleports/EndEpisode - the FSM owns the mission cycle. MUST be OFF for training!")]
+    [SerializeField] private bool missionMode = false;
 
     [Header("Rewards")]
     [SerializeField] private float approachReward = 2.0f;   // per meter of approach
@@ -156,6 +160,18 @@ public class RobotBrain : Agent
     public override void OnEpisodeBegin()
     {
         episodeSteps = 0;
+
+        // MISSION MODE: the state machine owns the world - no teleports,
+        // no ball respawn, no obstacle shuffle. Only internal counters reset.
+        if (missionMode)
+        {
+            lastKnownBallAngle = 0f;
+            timeSinceBall = timeSinceBallCap;
+            prevGas = prevSteer = 0f;
+            holdCounter = 0;
+            prevWorldDistance = FlatDistanceToBall();
+            return;
+        }
 
         // If we were holding something, release it (restores ball physics and parent)
         if (gripper != null && gripper.IsHolding) gripper.ReleaseCommand();
@@ -254,13 +270,20 @@ public class RobotBrain : Agent
         Obs03_RightIR   = sensors != null ? sensors.RightIR : 0;
         Obs04_GripperIR = sensors != null ? sensors.GripperIR : 0;
 
-        // 5-8. Camera / YOLO (with optional burst dropout on fast rotation)
-        bool visible = yolo != null && yolo.IsVisible;
+        // 5-8. Camera / YOLO. Source: real robot (Practice 7 HIL) when RealVision
+        // is assigned and switched on, otherwise the simulated camera.
+        bool useReal = realVision != null && realVision.useYOLO;
+        bool visible = useReal ? realVision.IsVisible
+                               : (yolo != null && yolo.IsVisible);
+        float visAngle = useReal ? realVision.RelativeAngle
+                                 : (yolo != null ? yolo.RelativeAngle : 0f);
+        float visDist  = useReal ? realVision.NormalizedDistance
+                                 : (yolo != null ? yolo.NormalizedDistance : 1f);
         if (randomizer != null && rb != null)
             visible = randomizer.FilterBallVisibility(visible, rb.angularVelocity.magnitude, IsTraining);
         Obs08_BallVisible  = visible ? 1f : 0f;
-        Obs05_BallAngle    = visible ? yolo.RelativeAngle : 0f;
-        Obs06_BallDistance = visible ? yolo.NormalizedDistance : 1f;
+        Obs05_BallAngle    = visible ? visAngle : 0f;
+        Obs06_BallDistance = visible ? visDist : 1f;
         if (visible) { lastKnownBallAngle = yolo.RelativeAngle; timeSinceBall = 0f; }
         Obs07_LastKnownAngle = lastKnownBallAngle;
 
@@ -322,6 +345,11 @@ public class RobotBrain : Agent
         {
             StepReward = 0f;
             if (track != null) track.SetCommand(0f, 0f);   // forced stop
+
+            // Mission mode: just hold position; the state machine will disable
+            // this agent and drive the delivery leg itself.
+            if (missionMode) return;
+
             holdCounter++;
             Add(holdReward);
 
@@ -373,8 +401,9 @@ public class RobotBrain : Agent
         }
 
         // 2. Look at the ball (correct trajectory): reward for centering it in view.
-        if (yolo != null && yolo.IsVisible)
-            Add(centerReward * (1f - Mathf.Abs(yolo.RelativeAngle)));
+        //    Uses the same source as observations (sim camera or RealVision).
+        if (Obs08_BallVisible > 0.5f)
+            Add(centerReward * (1f - Mathf.Abs(Obs05_BallAngle)));
 
         // 3. Slow down near the ball: reward being slow when close, so it doesn't
         //    ram the ball at full speed right before the grab.
@@ -406,6 +435,9 @@ public class RobotBrain : Agent
         // --- Terminal conditions ---
         // (Success is handled by the HOLD phase in OnActionReceived: the robot
         // must hold the ball for holdDecisions before the episode ends.)
+
+        // Mission mode: the FSM owns the mission - never terminate episodes.
+        if (missionMode) return;
 
         // Failure: fell through the floor or left the arena.
         Vector3 c = ArenaCenter;

@@ -739,8 +739,8 @@ Transform:
   m_GameObject: {fileID: 1266009222433944286}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 1.09, y: 0.15, z: 0.893}
-  m_LocalScale: {x: 0.1, y: 0.3, z: 0.4}
+  m_LocalPosition: {x: 1.09, y: 0.2, z: 0.893}
+  m_LocalScale: {x: 0.1, y: 0.4, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8479779245427173986}
@@ -994,8 +994,8 @@ Transform:
   m_GameObject: {fileID: 1447002193263870493}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: -1.204, y: 0.15, z: -0.86}
-  m_LocalScale: {x: 0.1, y: 0.3, z: 0.4}
+  m_LocalPosition: {x: -1.204, y: 0.2, z: -0.86}
+  m_LocalScale: {x: 0.1, y: 0.4, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8479779245427173986}
@@ -2646,8 +2646,8 @@ Transform:
   m_GameObject: {fileID: 4715408630501139221}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: -0.2, y: 0.15, z: -0.29}
-  m_LocalScale: {x: 0.1, y: 0.3, z: 0.4}
+  m_LocalPosition: {x: -0.2, y: 0.2, z: -0.29}
+  m_LocalScale: {x: 0.1, y: 0.4, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8479779245427173986}
@@ -2964,8 +2964,8 @@ Transform:
   m_GameObject: {fileID: 6178843637376709933}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 1.26, y: 0.15, z: -0.86}
-  m_LocalScale: {x: 0.1, y: 0.3, z: 0.4}
+  m_LocalPosition: {x: 1.26, y: 0.2, z: -0.86}
+  m_LocalScale: {x: 0.2, y: 0.4, z: 0.4}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8479779245427173986}
@@ -3269,6 +3269,7 @@ GameObject:
   - component: {fileID: 4484566737087193382}
   - component: {fileID: 1457573680340475617}
   - component: {fileID: 8596020405969610909}
+  - component: {fileID: 2309489075339416664}
   m_Layer: 0
   m_Name: robot
   m_TagString: Untagged
@@ -3442,8 +3443,9 @@ MonoBehaviour:
   track: {fileID: 7008179617940341906}
   sensors: {fileID: 423753404081589090}
   yolo: {fileID: 1772352351427271245}
+  realVision: {fileID: 2309489075339416664}
   gripper: {fileID: 3220525709542475534}
-  randomizer: {fileID: 0}
+  randomizer: {fileID: 8596020405969610909}
   obstacleRandomizer: {fileID: 5850010712500723082}
   cameraServo: {fileID: 6363993154346188457}
   maxServoAngle: 90
@@ -3459,6 +3461,7 @@ MonoBehaviour:
   fallDrop: 0.5
   spawnPoint: {fileID: 0}
   maxEpisodeSteps: 4000
+  missionMode: 0
   approachReward: 2
   approachDeltaClamp: 0.15
   nearBoost: 2
@@ -3541,6 +3544,28 @@ MonoBehaviour:
   dropoutSteps: {x: 5, y: 16}
   actionLatency: 1
   latencySteps: {x: 8, y: 14}
+--- !u!114 &2309489075339416664
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7006239351901067045}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ab33237395a4181d48afd3e046a01949, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RealVision
+  udpPort: 5005
+  useYOLO: 0
+  signalTimeout: 0.5
+  bboxAtGripper: 0.45
+  bboxAtMaxRange: 0.04
+  seesBall: 0
+  relativeAngle: 0
+  normalizedDistance: 0
+  confidence: 0
+  lastPacketAge: 0
 --- !u!1 &7203531778834889668
 GameObject:
   m_ObjectHideFlags: 0
