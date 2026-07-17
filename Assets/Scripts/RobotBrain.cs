@@ -69,6 +69,9 @@ public class RobotBrain : Agent
     [SerializeField] private bool missionMode = false;
 
     [Header("Rewards")]
+    [Tooltip("Reward per step for driving forward, independent of the ball - keeps a positive " +
+             "signal alive while exploring blind (ball not yet found / out of view)")]
+    [SerializeField] private float forwardReward = 0.01f;
     [SerializeField] private float approachReward = 2.0f;   // per meter of approach
     [SerializeField] private float approachDeltaClamp = 0.15f; // max |dist change| counted per step
     [SerializeField] private float nearBoost = 2.0f;        // multiplier when close to ball
@@ -409,11 +412,23 @@ public class RobotBrain : Agent
 
     private void ComputeRewards(float gas, float steer)
     {
+        // Real, occlusion-aware visibility - Obs08_BallVisible already went through
+        // SimulatedYoloCamera's raycast line-of-sight check (or RealVision on hardware),
+        // so this is "actually seen", not just "somewhere in the FOV cone through a wall".
+        bool ballVisible = Obs08_BallVisible > 0.5f;
         float dist = ball != null ? FlatDistanceToBall() : float.MaxValue;
+
+        // 0. Baseline reward for driving forward, independent of the ball - so exploring
+        //    while the ball hasn't been spotted yet isn't a dead/punishing zone.
+        if (gas > 0f)
+            Add(forwardReward * gas);
 
         // 1. Distance Delta: reward for approaching, delta clamped so a ball
         //    nudge / teleport can never produce a huge single-step spike.
-        if (ball != null)
+        //    Ground-truth world distance must never leak into reward while the robot
+        //    can't actually see the ball - otherwise driving away while blind gets
+        //    punished for a change it has no way of perceiving.
+        if (ball != null && ballVisible)
         {
             float delta = Mathf.Clamp(prevWorldDistance - dist, -approachDeltaClamp, approachDeltaClamp);
             float boost = dist < 0.5f ? nearBoost : 1f;
@@ -423,12 +438,12 @@ public class RobotBrain : Agent
 
         // 2. Look at the ball (correct trajectory): reward for centering it in view.
         //    Uses the same source as observations (sim camera or RealVision).
-        if (Obs08_BallVisible > 0.5f)
+        if (ballVisible)
             Add(centerReward * (1f - Mathf.Abs(Obs05_BallAngle)));
 
         // 3. Slow down near the ball: reward being slow when close, so it doesn't
-        //    ram the ball at full speed right before the grab.
-        if (ball != null && dist < slowdownRadius)
+        //    ram the ball at full speed right before the grab. Same visibility gate.
+        if (ball != null && ballVisible && dist < slowdownRadius)
         {
             float speedNorm = rb != null ? Mathf.Clamp01(rb.linearVelocity.magnitude / maxSpeed) : 0f;
             Add(slowdownReward * (1f - speedNorm));
