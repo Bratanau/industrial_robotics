@@ -111,3 +111,7 @@ results/
 cloud_package/
 *.zip
 Assets/ML-Agents/Timers/
+
+Assets/ML-Agents/Timers/
+Assets/Settings/PC_RPAsset.asset
+Assets/Settings/UniversalRenderPipelineGlobalSettings.asset
