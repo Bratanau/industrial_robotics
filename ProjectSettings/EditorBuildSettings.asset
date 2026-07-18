@@ -11,9 +11,12 @@ EditorBuildSettings:
   - enabled: 0
     path: Assets/Scenes/SceneW.unity
     guid: 87f14d8ee83f7dba6917cc27f6b24b31
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/SceneW1.unity
     guid: 6d67a8e3745131e2db779ec3370ebb29
+  - enabled: 1
+    path: Assets/Scenes/Scene_KIRILL_EMPTY_TRAIN.unity
+    guid: 6e30ab92c23982f41a4ad11bb99b401c
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
