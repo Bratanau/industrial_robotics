@@ -556,20 +556,6 @@ public class RobotBrain : Agent
         // Mission mode: the FSM owns the mission - never terminate episodes.
         if (missionMode) return;
 
-        // Failure: fell through the floor or left the arena.
-        Vector3 c = ArenaCenter;
-        bool outside = Mathf.Abs(transform.position.x - c.x) > arenaHalf + 0.3f
-                    || Mathf.Abs(transform.position.z - c.z) > arenaHalf + 0.3f
-                    || transform.position.y < c.y - fallDrop
-                    || transform.position.y > c.y + 1.5f;   // launched into the air
-        if (outside)
-        {
-            Add(-fallPenalty);
-            dbg_FallPenaltyApplied = -fallPenalty;
-            EndEpisode();
-            return;
-        }
-
         // Time up: truncate without a big penalty so the episode always resets.
         if (episodeSteps >= maxEpisodeSteps)
             EndEpisode();
