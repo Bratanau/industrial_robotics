@@ -404,17 +404,9 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 1682234727}
     - target: {fileID: 592650588668096372, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
-      propertyPath: suddenMovePenalty
-      value: 0.3
-      objectReference: {fileID: 0}
-    - target: {fileID: 592650588668096372, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
       propertyPath: obstacleRandomizer
       value: 
       objectReference: {fileID: 1682234726}
-    - target: {fileID: 592650588668096372, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
-      propertyPath: centeringRewardScale
-      value: 0.03
-      objectReference: {fileID: 0}
     - target: {fileID: 1024307701010757667, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
       propertyPath: ball
       value: 
@@ -426,14 +418,6 @@ PrefabInstance:
     - target: {fileID: 4477890285157004595, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
       propertyPath: m_Name
       value: robot_new (12)
-      objectReference: {fileID: 0}
-    - target: {fileID: 5009928721283891531, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
-      propertyPath: m_Model
-      value: 
-      objectReference: {fileID: 0}
-    - target: {fileID: 5009928721283891531, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
-      propertyPath: m_BehaviorType
-      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8735070490523563315, guid: 44cb2d86383317a40861bfecb64071df, type: 3}
       propertyPath: m_LocalPosition.x
