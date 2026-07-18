@@ -578,13 +578,13 @@ public class RobotBrain : Agent
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var cont = actionsOut.ContinuousActions;
-        // GetAxisRaw (not GetAxis): instant -1/0/+1 with NO smoothing, so manual gas/steer
-        // behave exactly like the camera's GetKey - an abrupt A->D flips sign in one decision
-        // (sudden-move penalty fires), while releasing to neutral for a while before turning
-        // the other way does not. It also matches what a trained policy actually feeds these
-        // actions (raw values that can jump), unlike GetAxis's artificial keyboard ramp.
-        cont[0] = Input.GetAxisRaw("Vertical");     // W/S -> gas
-        cont[1] = Input.GetAxisRaw("Horizontal");   // A/D -> steer
+        // GetAxis (smoothed), not GetAxisRaw: raw instant -1/0/+1 made manual keyboard
+        // driving violently bang-bang (visibly shaking left-right from the robot's own
+        // camera). This only affects Heuristic/manual testing - during actual training the
+        // policy's continuous outputs never go through Input Manager at all, so the sudden-
+        // move detection still works correctly for real training regardless of this.
+        cont[0] = Input.GetAxis("Vertical");     // W/S -> gas
+        cont[1] = Input.GetAxis("Horizontal");   // A/D -> steer
         cont[2] = (Input.GetKey(KeyCode.E) ? 1f : 0f) - (Input.GetKey(KeyCode.Q) ? 1f : 0f); // Q/E -> camera
     }
 
