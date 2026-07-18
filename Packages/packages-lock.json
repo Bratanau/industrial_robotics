@@ -187,6 +187,15 @@
       },
       "hash": "90f353e4352aae4df52fa2c05e49b804631d2a63"
     },
+    "com.unity.sdk.linux-arm64": {
+      "version": "1.1.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.sysroot.base": "1.1.0"
+      },
+      "url": "https://packages.unity.com"
+    },
     "com.unity.sdk.linux-x86_64": {
       "version": "1.1.0",
       "depth": 0,
