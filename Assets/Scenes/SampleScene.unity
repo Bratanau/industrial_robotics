@@ -135,22 +135,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8e3a66c0abdfbc6439393aed4803921a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::VirtualSensors
---- !u!114 &89647712 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 5391371520141763513, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
-  m_PrefabInstance: {fileID: 3730889849759289094}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 89647710}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c8a30e7ef3276de46990fd1d576fb713, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrackController
---- !u!54 &89647714 stripped
-Rigidbody:
-  m_CorrespondingSourceObject: {fileID: 5523224246042985963, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
-  m_PrefabInstance: {fileID: 3730889849759289094}
-  m_PrefabAsset: {fileID: 0}
 --- !u!114 &89647720
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -167,49 +151,52 @@ MonoBehaviour:
     maxStep: 0
   hasUpgradedFromAgentParameters: 1
   MaxStep: 0
-  trackController: {fileID: 89647712}
+  track: {fileID: 0}
   sensors: {fileID: 89647711}
-  gripper: {fileID: 671283618}
-  yoloCamera: {fileID: 1628554670}
+  yolo: {fileID: 0}
+  realVision: {fileID: 0}
+  randomizer: {fileID: 0}
+  obstacleRandomizer: {fileID: 0}
+  diagLogger: {fileID: 0}
   cameraServo: {fileID: 1658011618}
-  rb: {fileID: 89647714}
-  ballTransform: {fileID: 826170664}
-  arenaMin: {x: -10, y: -10, z: -10}
-  arenaMax: {x: 10, y: 10, z: 10}
-  resetBallOnEpisode: 1
-  randomizeBallOnReset: 1
-  ballSpawnMinDistance: 0.5
-  ballSpawnMaxDistance: 1.5
-  servoMaxAngle: 90
+  maxServoAngle: 90
   servoSpeed: 60
-  approachRewardScale: 0.05
-  actionRatePenaltyScale: 0.001
-  centeringBonusScale: 0.01
-  wallProximityPenalty: 0.02
-  successReward: 5
-  outOfBoundsPenalty: -2
-  wallCriticalUsThreshold: 0.15
-  o01_ultrasonic: 0
-  o02_leftIR: 0
-  o03_rightIR: 0
-  o04_gripperIR: 0
-  o05_ballAngle: 0
-  o06_ballDistance: 0
-  o07_lastKnownAngle: 0
-  o08_ballVisible: 0
-  o09_servoAngleNorm: 0
-  o10_hasBall: 0
-  o11_dxNorm: 0
-  o12_dzNorm: 0
-  o13_headingNorm: 0
-  o14_speed: 0
-  o15_timeSinceBallNorm: 0
-  actGas: 0
-  actSteer: 0
-  actCameraCmd: 0
-  actGripCmd: 0
-  rewardStep: 0
-  rewardCumulative: 0
+  ball: {fileID: 0}
+  ballTag: TargetBall
+  arenaCenter: {fileID: 0}
+  finishArea: {fileID: 0}
+  ballMinForward: 2
+  ballMaxForward: 3.2
+  ballHalfWidth: 1.5
+  robotSpawnJitter: 0.5
+  spawnPoint: {fileID: 0}
+  maxEpisodeSteps: 4000
+  missionMode: 0
+  standingStillPenalty: 0.001
+  towardBallReward: 0.003
+  centeringRewardScale: 0.001
+  backwardVisiblePenalty: 0.001
+  backwardBlindPenalty: 0.0001
+  suddenMovePenalty: 0.001
+  suddenMoveSignificance: 0.2
+  oscillationWindowDecisions: 12
+  sideIRCriticalPenalty: 50
+  ultrasonicCriticalPenalty: 50
+  ultrasonicCriticalThreshold: 0.2
+  gripRewardIntervalDecisions: 5
+  gripHoldMaxDecisions: 20
+  gripHoldTickBonus: 50
+  gripLostPenalty: 50
+  dbg_StandingStillApplied: 0
+  dbg_TowardBallApplied: 0
+  dbg_CenteringApplied: 0
+  dbg_BackwardApplied: 0
+  dbg_SideIRCriticalApplied: 0
+  dbg_UltrasonicCriticalApplied: 0
+  dbg_SuddenMoveApplied: 0
+  dbg_GripHoldBonusApplied: 0
+  dbg_GripLostApplied: 0
+  timeSinceBallCap: 10
 --- !u!114 &89647721
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -243,6 +230,53 @@ MonoBehaviour:
   DecisionPeriod: 5
   DecisionStep: 0
   TakeActionsBetweenDecisions: 1
+--- !u!114 &89647728
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 89647710}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be4fd7a49672b5b0c8767baf07534225, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DomainRandomizer
+  enableRandomization: 1
+  robotRb: {fileID: 0}
+  track: {fileID: 0}
+  ball: {fileID: 0}
+  randomizeRobotMass: 1
+  robotMassRange: {x: 1, y: 4}
+  randomizeMotors: 1
+  moveSpeedRange: {x: 0.3, y: 0.7}
+  turnSpeedRange: {x: 80, y: 160}
+  randomizeBall: 1
+  ballMassMul: {x: 0.5, y: 2}
+  ballScaleMul: {x: 0.8, y: 1.2}
+  sonarNoise: 1
+  sonarNoiseAmp: 0.05
+  yoloDropout: 1
+  dropoutAngularSpeed: 0.5
+  dropoutChance: 0.15
+  dropoutSteps: {x: 5, y: 16}
+  actionLatency: 1
+  latencySteps: {x: 8, y: 14}
+--- !u!114 &89647729
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 89647710}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9a7cf5f0a96d8c4aa09265928be24d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DiagnosticLogger
+  enableLogging: 0
+  logEveryN: 1
+  maxRows: 2000
 --- !u!1 &330585543
 GameObject:
   m_ObjectHideFlags: 0
@@ -624,17 +658,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &671283618 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 3562910501493005276, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
-  m_PrefabInstance: {fileID: 3730889849759289094}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7a4478bc32c7fbe49bf45f3465dac3ae, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GripperController
 --- !u!1 &826170659
 GameObject:
   m_ObjectHideFlags: 0
@@ -1210,6 +1233,7 @@ GameObject:
   - component: {fileID: 1628554668}
   - component: {fileID: 1628554667}
   - component: {fileID: 1628554670}
+  - component: {fileID: 1628554671}
   m_Layer: 0
   m_Name: Camera
   m_TagString: Untagged
@@ -1358,6 +1382,28 @@ MonoBehaviour:
   dbg_distanceToBall: 0
   dbg_angleToBall: 0
   dbg_lastReason: '-'
+--- !u!114 &1628554671
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1628554665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ab33237395a4181d48afd3e046a01949, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RealVision
+  udpPort: 5005
+  useYOLO: 0
+  signalTimeout: 0.5
+  bboxAtGripper: 0.45
+  bboxAtMaxRange: 0.04
+  seesBall: 0
+  relativeAngle: 0
+  normalizedDistance: 0
+  confidence: 0
+  lastPacketAge: 0
 --- !u!1 &1658011617
 GameObject:
   m_ObjectHideFlags: 0
@@ -1398,6 +1444,18 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 937358267300488650, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
+      propertyPath: diagLogger
+      value: 
+      objectReference: {fileID: 89647729}
+    - target: {fileID: 937358267300488650, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
+      propertyPath: randomizer
+      value: 
+      objectReference: {fileID: 89647728}
+    - target: {fileID: 937358267300488650, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
+      propertyPath: realVision
+      value: 
+      objectReference: {fileID: 1628554671}
     - target: {fileID: 1991323104616000709, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0.00679
@@ -1550,6 +1608,12 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 2172756444253582897, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
       insertIndex: -1
       addedObject: {fileID: 89647727}
+    - targetCorrespondingSourceObject: {fileID: 2172756444253582897, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 89647729}
+    - targetCorrespondingSourceObject: {fileID: 2172756444253582897, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 89647728}
   m_SourcePrefab: {fileID: 100100000, guid: 9305b036f4e0b6349af87c6fbdfb07a0, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

@@ -6,8 +6,8 @@ using Unity.MLAgents.Sensors;
 /// <summary>
 /// Interceptor GFS-X AI agent. Glues the team scripts (TrackController,
 /// VirtualSensors, SimulatedYoloCamera) into one "brain":
-///   - collects 11 observations (order strictly matches the Practice 3 table,
-///     minus odometry/heading/speed - the real GFS-X has none of those sensors),
+///   - collects 15 observations (order strictly matches the Practice 3 table,
+///     including odometry/heading/speed for the ML-Agents vector),
 ///   - dispatches 3 continuous actions (no discrete action - the claw is autonomous,
 ///     driven directly by the GripperIR sensor, matching real hardware exactly),
 ///   - computes bounded rewards (all fixed amounts, no multipliers/percentages),
@@ -16,7 +16,7 @@ using Unity.MLAgents.Sensors;
 ///
 /// Behavior Parameters on the robot MUST match:
 ///   Behavior Name = GFSX_Brain (same as config.yaml)
-///   Vector Observation -> Space Size = 11, Stacked Vectors = 4
+///   Vector Observation -> Space Size = 15, Stacked Vectors = 4
 ///   Continuous Actions = 3, Discrete Branches = 0
 /// Leave the inspector "Max Step" = 0; this script caps the episode itself.
 /// </summary>
@@ -35,6 +35,10 @@ public class RobotBrain : Agent
     [SerializeField] private DomainRandomizer randomizer;
     [Tooltip("Optional ObstacleRandomizer: scatters the obstacle belt every episode (competition rule). Leave empty for a fixed layout")]
     [SerializeField] private ObstacleRandomizer obstacleRandomizer;
+
+    [Header("Diagnostics (Practice 6)")]
+    [Tooltip("Optional CSV diagnostic logger for Sim-to-Real debugging. Leave empty to skip logging")]
+    [SerializeField] private DiagnosticLogger diagLogger;
 
     [Header("Camera servo")]
     [Tooltip("Transform rotated by the camera command (usually the camera object / pan joint)")]
@@ -151,7 +155,11 @@ public class RobotBrain : Agent
     public float Obs08_BallVisible       { get; private set; }
     public float Obs09_ServoAngleNorm    { get; private set; }
     public float Obs10_HasBall           { get; private set; }
-    public float Obs11_TimeSinceBallNorm { get; private set; }
+    public float Obs11_DisplacementX     { get; private set; }
+    public float Obs12_DisplacementZ     { get; private set; }
+    public float Obs13_HeadingNorm       { get; private set; }
+    public float Obs14_SpeedNorm         { get; private set; }
+    public float Obs15_TimeSinceBallNorm { get; private set; }
 
     public float ActGas       { get; private set; }
     public float ActSteer     { get; private set; }
@@ -166,6 +174,7 @@ public class RobotBrain : Agent
     public override void Initialize()
     {
         rb = GetComponent<Rigidbody>();
+        if (diagLogger == null) diagLogger = GetComponent<DiagnosticLogger>();
 
         startPos = spawnPoint != null ? spawnPoint.position : transform.position;
         startRot = spawnPoint != null ? spawnPoint.rotation : transform.rotation;
@@ -326,8 +335,15 @@ public class RobotBrain : Agent
         // "IsHolding" state) - the real robot only ever has the raw sensor to go on.
         Obs10_HasBall = Obs04_GripperIR == 1 ? 1f : 0f;
 
-        // 11. Time since last detection
-        Obs11_TimeSinceBallNorm = Mathf.Clamp01(timeSinceBall / timeSinceBallCap);
+        // 11-14. Odometry / heading / speed
+        Vector3 displacement = transform.position - startPos;
+        Obs11_DisplacementX = Mathf.Clamp(displacement.x / 3f, -1f, 1f);
+        Obs12_DisplacementZ = Mathf.Clamp(displacement.z / 3f, -1f, 1f);
+        Obs13_HeadingNorm = Mathf.Repeat(transform.eulerAngles.y, 360f) / 360f;
+        Obs14_SpeedNorm = rb != null ? Mathf.Clamp01(rb.linearVelocity.magnitude / 0.5f) : 0f;
+
+        // 15. Time since last detection
+        Obs15_TimeSinceBallNorm = Mathf.Clamp01(timeSinceBall / timeSinceBallCap);
 
         // --- Feed strictly in the Practice 3 table order ---
         sensor.AddObservation(Obs01_Ultrasonic);
@@ -340,7 +356,11 @@ public class RobotBrain : Agent
         sensor.AddObservation(Obs08_BallVisible);
         sensor.AddObservation(Obs09_ServoAngleNorm);
         sensor.AddObservation(Obs10_HasBall);
-        sensor.AddObservation(Obs11_TimeSinceBallNorm);
+        sensor.AddObservation(Obs11_DisplacementX);
+        sensor.AddObservation(Obs12_DisplacementZ);
+        sensor.AddObservation(Obs13_HeadingNorm);
+        sensor.AddObservation(Obs14_SpeedNorm);
+        sensor.AddObservation(Obs15_TimeSinceBallNorm);
     }
 
     public override void OnActionReceived(ActionBuffers actions)
@@ -373,6 +393,27 @@ public class RobotBrain : Agent
                         : Vector3.up);
 
         ComputeRewards(gas, steer, camCmd);
+
+        // --- Practice 6: diagnostic CSV log for Sim-to-Real debugging ---
+        // Logs the ACTUAL executed gas/steer/camCmd (post Domain-Randomization latency
+        // delay if a randomizer is attached), not the raw policy output in ActGas/ActSteer -
+        // this matches what the real motors would have actually received.
+        if (diagLogger != null)
+        {
+            // isRetrying: no such state machine in this version - the claw is purely
+            // observational (drives are never frozen/reversed automatically on grip loss),
+            // so this is always false here. Wire it up if you add a retry FSM later.
+            bool isRetrying = false;
+
+            diagLogger.LogStep(
+                StepCount,
+                Obs08_BallVisible > 0.5f, Obs05_BallAngle, Obs06_BallDistance,
+                Obs01_Ultrasonic, Obs02_LeftIR, Obs03_RightIR, Obs04_GripperIR,
+                servoAngle, gas, steer, Obs10_HasBall > 0.5f, gripHoldDecisions, isRetrying,
+                transform.position.x - startPos.x, transform.position.z - startPos.z,
+                transform.eulerAngles.y / 360f, rb != null ? rb.linearVelocity.magnitude : 0f
+            );
+        }
     }
 
     private void ComputeRewards(float gas, float steer, float camCmd)
