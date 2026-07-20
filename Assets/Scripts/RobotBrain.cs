@@ -40,6 +40,10 @@ public class RobotBrain : Agent
     [Tooltip("Optional CSV diagnostic logger for Sim-to-Real debugging. Leave empty to skip logging")]
     [SerializeField] private DiagnosticLogger diagLogger;
 
+    [Header("ROS bridge (Practice 8)")]
+    [Tooltip("Optional real-robot bridge; used only during inference, not during training")]
+    [SerializeField] private ROSBridge rosBridge;
+
     [Header("Camera servo")]
     [Tooltip("Transform rotated by the camera command (usually the camera object / pan joint)")]
     [SerializeField] private Transform cameraServo;
@@ -140,6 +144,7 @@ public class RobotBrain : Agent
     private int episodeSteps;
     private int gripHoldDecisions;
     private int gripRewardTicksGranted;
+    private bool gripActivePrevFrame;
 
     /// <summary>True when connected to the Python trainer (used later for domain randomization / ROSBridge gating).</summary>
     public bool IsTraining => Academy.Instance.IsCommunicatorOn;
@@ -285,6 +290,7 @@ public class RobotBrain : Agent
         gasSigAge = steerSigAge = camSigAge = 999999;
         gripHoldDecisions = 0;
         gripRewardTicksGranted = 0;
+        gripActivePrevFrame = false;
         prevWorldDistance = FlatDistanceToBall();
 
         // Domain Randomization (Practice 5): physics + latency queue reset
@@ -393,6 +399,18 @@ public class RobotBrain : Agent
                         : Vector3.up);
 
         ComputeRewards(gas, steer, camCmd);
+
+        // --- Practice 8: bridge to the real robot (inference only) ---
+        if (!IsTraining && rosBridge != null)
+        {
+            rosBridge.PublishCommand(gas, steer);
+            rosBridge.PublishCameraCmd(camCmd);
+
+            bool gripActive = Obs04_GripperIR == 1;
+            if (gripActive && !gripActivePrevFrame)
+                rosBridge.PublishGripperCmd(1);
+            gripActivePrevFrame = gripActive;
+        }
 
         // --- Practice 6: diagnostic CSV log for Sim-to-Real debugging ---
         // Logs the ACTUAL executed gas/steer/camCmd (post Domain-Randomization latency
