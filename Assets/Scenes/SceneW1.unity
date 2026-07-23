@@ -353,7 +353,7 @@ Camera:
   field of view: 60
   orthographic: 0
   orthographic size: 5
-  m_Depth: 1
+  m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
     m_Bits: 4294967295
@@ -452,6 +452,14 @@ PrefabInstance:
       propertyPath: m_Name
       value: TrainingArea
       objectReference: {fileID: 0}
+    - target: {fileID: 735085499453871965, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_TagString
+      value: TargetBall
+      objectReference: {fileID: 0}
+    - target: {fileID: 2030107888607503026, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_Depth
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 2551206570222548785, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
       propertyPath: m_Model
       value: 
@@ -460,7 +468,63 @@ PrefabInstance:
       propertyPath: m_BehaviorType
       value: 2
       objectReference: {fileID: 0}
+    - target: {fileID: 3954418328595997307, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: ballHalfWidth
+      value: 0.7
+      objectReference: {fileID: 0}
+    - target: {fileID: 3954418328595997307, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: robotSpawnJitter
+      value: 0.3
+      objectReference: {fileID: 0}
     - target: {fileID: 4484566737087193382, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_Model
+      value: 
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BehaviorType
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_UseChildSensors
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_DeterministicInference
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BrainParameters.VectorActionSpaceType
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BrainParameters.VectorActionSize.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BrainParameters.NumStackedVectorObservations
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: 'm_BrainParameters.VectorActionSize.Array.data[0]'
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BrainParameters.m_ActionSpec.BranchSizes.Array.size
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: m_BrainParameters.m_ActionSpec.m_NumContinuousActions
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 5576063811600784718, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: 'm_BrainParameters.m_ActionSpec.BranchSizes.Array.data[0]'
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 5780929818216139609, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
       propertyPath: m_Enabled
       value: 1
       objectReference: {fileID: 0}
@@ -711,7 +775,19 @@ PrefabInstance:
     - target: {fileID: 1772352351427271245, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
       propertyPath: robotRoot
       value: 
-      objectReference: {fileID: 1926595796}
+      objectReference: {fileID: 0}
+    - target: {fileID: 3954418328595997307, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: hintDecayPerMove
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 3954418328595997307, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: hintDecayPerTurn
+      value: 0.8
+      objectReference: {fileID: 0}
+    - target: {fileID: 3954418328595997307, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
+      propertyPath: hintDecaySeconds
+      value: 10
+      objectReference: {fileID: 0}
     - target: {fileID: 8479779245427173986, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
       propertyPath: m_LocalPosition.x
       value: 6
@@ -757,11 +833,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
---- !u!4 &1926595796 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 7452429037531001273, guid: 71bdd9a978defbb43a11c01a0e99c8d6, type: 3}
-  m_PrefabInstance: {fileID: 1926595795}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &1927513717
 PrefabInstance:
   m_ObjectHideFlags: 0

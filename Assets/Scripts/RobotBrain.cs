@@ -4,152 +4,211 @@ using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
 
 /// <summary>
-/// Interceptor GFS-X AI agent. Glues the team scripts (TrackController,
-/// VirtualSensors, SimulatedYoloCamera) into one "brain":
-///   - collects 15 observations (order strictly matches the Practice 3 table,
-///     including odometry/heading/speed for the ML-Agents vector),
-///   - dispatches 3 continuous actions (no discrete action - the claw is autonomous,
-///     driven directly by the GripperIR sensor, matching real hardware exactly),
-///   - computes bounded rewards (all fixed amounts, no multipliers/percentages),
-///   - exposes the public fields that BrainDebugHUD reads.
-/// Inherits Agent (ML-Agents). Attach to the "robot" object.
+/// RobotBrain v6.1 — GFS-X (Яндекс×УрФУ)
+/// =====================================================================
+/// База: экономика наград из deathlydh/Unity-ROS-Autonomous-Agent (v27),
+/// проверенная на 50M шагов. Адаптировано под наши компоненты и миссию.
 ///
-/// Behavior Parameters on the robot MUST match:
-///   Behavior Name = GFSX_Brain (same as config.yaml)
-///   Vector Observation -> Space Size = 15, Stacked Vectors = 4
-///   Continuous Actions = 3, Discrete Branches = 0
-/// Leave the inspector "Max Step" = 0; this script caps the episode itself.
-/// </summary>
+/// МИССИЯ: ехать ПРЯМО на мяч, подъехать МЕДЛЕННО, чтобы мяч оказался
+/// МЕЖДУ губками клешни, и ОСТАНОВИТЬСЯ, НЕ толкая его.
+///
+/// v5.0 — ПРОПОРЦИОНАЛЬНАЯ награда вместо бинарной. Бинарная оплачивала
+///   ДРОЖЬ на месте, из-за чего оптимальной становилась политика с mean≈0,
+///   и при Deterministic Inference робот просто стоял.
+///
+/// v5.3 — ДВОЙНЫЕ ВОРОТА центровки: мяч по центру кадра И камера не
+///   отвёрнута сервоприводом. Иначе робот "центровался" поворотом камеры
+///   и ехал физически боком — отсюда круги вокруг мяча.
+///
+/// v6.0 — Штраф за СДВИГ мяча вместо штрафа за КАСАНИЕ + ступенчатая
+///   награда (касание -> удержание -> успех), чтобы агент не боялся
+///   доводить манёвр до конца.
+///
+/// v6.1 — КРИТИЧЕСКИЙ ФИКС ЗАВИСАНИЯ ЭПИЗОДОВ.
+///   В v6.0 блок "защёлки" (latchOnArrival) стоял ВЫШЕ проверки лимита
+///   эпизода и делал return. Когда робот касался мяча, а мяч выкатывался,
+///   агент попадал в защёлку и НИКОГДА не доходил до EndEpisode().
+///   Симптом в логе: "No episode was completed since last summary" —
+///   в прошлом прогоне так утекло 4 миллиона шагов, а затем
+///   "corrupted size vs. prev_size" из-за роста буферов.
+///   Теперь: лимит эпизода проверяется ПЕРВЫМ, а защёлка работает
+///   ТОЛЬКО в инференсе (для демо на железе), не при обучении.
+///
+/// ⚠️ ЕСЛИ В ЛОГЕ ПОЯВИЛОСЬ "No episode was completed" — НЕМЕДЛЕННО СТОП.
+///
+/// INSPECTOR: Space Size = 18, Stacked Vectors = 4,
+///            Continuous Actions = 3, Discrete Branches = 0.
+/// =====================================================================
 [RequireComponent(typeof(Rigidbody))]
 public class RobotBrain : Agent
 {
-    [Header("Robot component references")]
+    [Header("Robot Component References")]
     [SerializeField] private TrackController track;
     [SerializeField] private VirtualSensors sensors;
     [SerializeField] private SimulatedYoloCamera yolo;
-    [Tooltip("Practice 7 (HIL): optional real-YOLO receiver. When assigned AND its useYOLO is ON, vision comes from the real robot instead of the simulated camera")]
+    [Tooltip("Práctica 7 (HIL): Receptor opcional de YOLO real.")]
     [SerializeField] private RealVision realVision;
 
-    [Header("Domain Randomization (optional)")]
-    [Tooltip("Optional DomainRandomizer component. Leave empty to train on a clean environment")]
+    [Header("Domain Randomization & Diagnostics")]
     [SerializeField] private DomainRandomizer randomizer;
-    [Tooltip("Optional ObstacleRandomizer: scatters the obstacle belt every episode (competition rule). Leave empty for a fixed layout")]
     [SerializeField] private ObstacleRandomizer obstacleRandomizer;
-
-    [Header("Diagnostics (Practice 6)")]
-    [Tooltip("Optional CSV diagnostic logger for Sim-to-Real debugging. Leave empty to skip logging")]
     [SerializeField] private DiagnosticLogger diagLogger;
-
-    [Header("ROS bridge (Practice 8)")]
-    [Tooltip("Optional real-robot bridge; used only during inference, not during training")]
     [SerializeField] private ROSBridge rosBridge;
 
-    [Header("Camera servo")]
-    [Tooltip("Transform rotated by the camera command (usually the camera object / pan joint)")]
+    [Header("Camera Servo Controls")]
     [SerializeField] private Transform cameraServo;
-    [SerializeField] private float maxServoAngle = 90f;   // +/-90 deg
+    [SerializeField] private float maxServoAngle = 90f;   // deg
     [SerializeField] private float servoSpeed = 90f;      // deg/s
 
-    [Header("Target and arena")]
+    [Header("Target and Arena")]
     [SerializeField] private Transform ball;
     [SerializeField] private string ballTag = "TargetBall";
-    [Tooltip("Optional arena center. If empty, world origin (0,0,0) is used")]
     [SerializeField] private Transform arenaCenter;
 
-    [Header("Ball spawn zone (competition layout)")]
-    [Tooltip("If assigned (needs a Collider, e.g. the 'Finish' marker), the ball spawns at a random point inside its bounds instead of the forward/side band below")]
-    [SerializeField] private Transform finishArea;
-    [Tooltip("Ball spawns in a band AHEAD of the robot's start direction: from minForward to maxForward meters in front of the robot's spawn point (used only when finishArea is empty)")]
-    [SerializeField] private float ballMinForward = 2.0f;
-    [SerializeField] private float ballMaxForward = 3.2f;
-    [Tooltip("Half-width of the ball spawn band sideways from the robot's start axis")]
-    [SerializeField] private float ballHalfWidth = 1.5f;
-    [Tooltip("Randomize the robot's start position sideways by +- this many meters along its spawn side")]
-    [SerializeField] private float robotSpawnJitter = 0.5f;
-    [Tooltip("Robot start pose. If empty, the scene-start pose is used")]
+    [Header("Ball Spawn Zone")]
+    [Tooltip("Мяч ДОЛЖЕН рождаться в поле зрения камеры (FOV ≈ ±30°) и НЕ за препятствиями. Иначе награды за сближение не будет вообще.")]
+    [SerializeField] private float ballMinForward = 0.6f;
+    [SerializeField] private float ballMaxForward = 1.6f;
+    [SerializeField] private float ballHalfWidth = 0.5f;
+    [SerializeField] private float robotSpawnJitter = 0.3f;
     [SerializeField] private Transform spawnPoint;
+    [SerializeField] private Transform finishArea;
 
-    [Header("Episode")]
-    [Tooltip("Hard cap on decision steps per episode. Guarantees the episode always resets.")]
-    [SerializeField] private int maxEpisodeSteps = 4000;
-    [Tooltip("MISSION MODE (Practice 7): for inference demos with the state machine. Disables all teleports/EndEpisode - the FSM owns the mission cycle. MUST be OFF for training!")]
+    [Header("Episode & Mission Mode")]
+    [SerializeField] private int maxEpisodeSteps = 1000;
+    [Tooltip("MISSION MODE: демо-инференс. Отключает телепорты и EndEpisode.")]
     [SerializeField] private bool missionMode = false;
+    [Tooltip("Защёлка: доехал -> стоим до конца. РАБОТАЕТ ТОЛЬКО В ИНФЕРЕНСЕ. При обучении она замораживала эпизоды навсегда.")]
+    [SerializeField] private bool latchOnArrival = true;
 
-    [Header("Rewards (all fixed amounts - no multipliers/percentages anywhere)")]
-    [Tooltip("Flat penalty per step while standing still (|gas| ~ 0). Moving forward alone gives nothing (0).")]
+    // ============== ЭКОНОМИКА НАГРАД ==============
+    [Header("R1 — Approach (главный сигнал, ПРОПОРЦИОНАЛЬНЫЙ)")]
+    [Tooltip("Итог = delta × scale × (2 + 4×(1−dist)) × alignFactor")]
+    [SerializeField] private float approachScale = 1.0f;
+    [SerializeField] private float approachSpikeFilter = 0.5f;
+
+    [Header("R2 — Успех: ступени касание -> удержание -> стоп")]
+    [Tooltip("Небольшая награда в момент ПЕРВОГО касания сенсором клешни")]
+    [SerializeField] private float touchBonus = 0.5f;
+    [Tooltip("Награда за каждый шаг удержания мяча в клешне СТОЯ")]
+    [SerializeField] private float holdStillBonus = 0.05f;
+    [Tooltip("Сколько шагов простоять с мячом в клешне до полного успеха")]
+    [SerializeField] private int holdStillSteps = 25;
+    [Tooltip("Финальная награда за выполненную миссию")]
+    [SerializeField] private float reachSuccessReward = 5.0f;
+    [Tooltip("Окно (шаги) после последнего видения мяча, в котором ИК клешни считается настоящим. Только для реального робота.")]
+    [SerializeField] private int ballSeenWindowSteps = 150;
+
+    [Header("R3 — ЕХАТЬ ПРЯМО: двойные ворота центровки")]
+    [Tooltip("Ниже этой дистанции награда за сближение ТРЕБУЕТ движения прямо")]
+    [SerializeField] private float alignRequiredDist = 0.5f;
+    [Tooltip("Допуск по мячу в кадре")]
+    [SerializeField] private float alignTolerance = 0.35f;
+    [Tooltip("Допуск по сервоприводу: камера отвёрнута = корпус НЕ смотрит на мяч")]
+    [SerializeField] private float servoTolerance = 0.25f;
+    [Tooltip("Награда за возврат камеры к центру при видимом мяче (доворот КОРПУСОМ)")]
+    [SerializeField] private float servoCenteringScale = 0.5f;
+    [SerializeField] private float slowDownBonus = 0.005f;   // dist<0.30, газ малый
+    [SerializeField] private float tooFastPenalty = 0.02f;   // dist<0.25, газ большой
+    [SerializeField] private float alignBonus = 0.005f;      // dist<0.40, едет прямо
+    [SerializeField] private float blindCrawlBonus = 0.003f; // мяч в слепой зоне
+    [Tooltip("Награда за движение ВПЕРЁД по вектору подсказки, пока мяч не виден")]
+    [SerializeField] private float hintFollowScale = 0.01f;
+    [Tooltip("Допуск по углу подсказки: при большей ошибке награда за следование = 0")]
+    [SerializeField] private float hintFollowTolerance = 0.3f;
+
+    [Header("R4 — Штрафы по ДАТЧИКАМ (существуют и на железе)")]
+    [SerializeField] private float sonarPenalty = 0.03f;     // градиентный
+    [SerializeField] private float sonarThreshold = 0.12f;
+    [SerializeField] private float sideIrPenalty = 0.01f;    // бинарный
+
+    [Header("R5 — Гладкость и задний ход")]
+    [SerializeField] private float actionRatePenalty = 0.05f;
+    [SerializeField] private float reversePenalty = 0.005f;
+
+    [Header("R6 — Анти-снегоуборщик (штраф за СДВИГ, не за касание)")]
+    [SerializeField] private float ballPushPenalty = 0.05f;
+    [Tooltip("Ниже этой скорости мяча контакт считается лёгким касанием, а не толчком")]
+    [SerializeField] private float ballPushSpeedThreshold = 0.05f;
+    [Tooltip("Скорость мяча, при которой штраф достигает максимума")]
+    [SerializeField] private float ballPushSpeedNorm = 0.30f;
+
+    [Header("R7 — Ползание и таймауты")]
+    [Tooltip("Газ ниже порога считается стоянием — закрывает дыру gas=0.05")]
     [SerializeField] private float standingStillPenalty = 0.001f;
-    [Tooltip("Flat reward per step for closing distance on a VISIBLE ball")]
-    [SerializeField] private float towardBallReward = 0.003f;
-    [Tooltip("Scale for centeringRewardScale * (1-|ServoAngle|) * (1-|BallAngle|), only while the ball is visible")]
-    [SerializeField] private float centeringRewardScale = 0.001f;
-    [Tooltip("Flat penalty per step for driving backwards while the ball IS visible")]
-    [SerializeField] private float backwardVisiblePenalty = 0.001f;
-    [Tooltip("Flat penalty per step for driving backwards while the ball is NOT visible")]
-    [SerializeField] private float backwardBlindPenalty = 0.0001f;
-    [Tooltip("Flat penalty for reversing gas/steer/camera direction (not just a large step - see suddenMoveSignificance)")]
-    [SerializeField] private float suddenMovePenalty = 0.001f;
-    [Tooltip("Minimum |value| for gas/steer/camCmd to count as a deliberate direction. Kept low so the SMOOTHED steer/gas (Input.GetAxis, or a smooth policy) still registers - a high threshold widens the near-zero dead band the ramp must cross, which the oscillation window then can't span")]
-    [SerializeField] private float suddenMoveSignificance = 0.2f;
-    [Tooltip("A direction reversal only counts as 'sudden' if the opposite significant reading appears within this many decisions of the last one. Must exceed how long a smoothed steer/gas takes to ramp across the dead band (else motor reversals never register), yet stay well under the straight-driving gap between two genuinely separate turns")]
-    [SerializeField] private int oscillationWindowDecisions = 12;
-    [Tooltip("Flat penalty when left/right IR is active (wall close on that side)")]
-    [SerializeField] private float sideIRCriticalPenalty = 50f;
-    [Tooltip("Flat penalty when the front ultrasonic reads under ultrasonicCriticalThreshold")]
-    [SerializeField] private float ultrasonicCriticalPenalty = 50f;
-    [SerializeField] private float ultrasonicCriticalThreshold = 0.2f;
+    [SerializeField] private float standingStillGasThreshold = 0.15f;
+    [SerializeField] private float episodeTimeoutPenalty = 0.05f;
+    [SerializeField] private float stuckPenalty = 0.5f;
 
-    [Header("Claw hold / success (based on the raw GripperIR sensor - matches real hardware, not a physics-only 'IsHolding' state)")]
-    [Tooltip("Decisions per reward tick. 5 decisions = 0.5 s at Decision Period 5 / 50 Hz physics")]
-    [SerializeField] private int gripRewardIntervalDecisions = 5;
-    [Tooltip("Decisions to hold before success (episode ends). 20 decisions = ~2 s at Decision Period 5 / 50 Hz physics (matches the real gripper closing time)")]
-    [SerializeField] private int gripHoldMaxDecisions = 20;
-    [Tooltip("Flat reward granted every gripRewardIntervalDecisions while the claw IR sensor stays continuously active")]
-    [SerializeField] private float gripHoldTickBonus = 50f;
-    [Tooltip("Flat penalty when the claw IR sensor was active and then deactivates before reaching gripHoldMaxDecisions (ball touched the claw and was lost)")]
-    [SerializeField] private float gripLostPenalty = 50f;
+    [Header("Debug — Live Reward Breakdown (Read-Only)")]
+    [SerializeField] private float dbg_Approach;
+    [SerializeField] private float dbg_Centering;
+    [SerializeField] private float dbg_AlignFactor;
+    [SerializeField] private float dbg_ServoNorm;
+    [SerializeField] private float dbg_StandingStill;
+    [SerializeField] private float dbg_Backward;
+    [SerializeField] private float dbg_SideIR;
+    [SerializeField] private float dbg_Sonar;
+    [SerializeField] private float dbg_ActionRate;
+    [SerializeField] private float dbg_BallPush;
+    [SerializeField] private float dbg_BallSpeed;
+    [SerializeField] private int   dbg_HoldTicks;
+    [SerializeField] private int   dbg_EpisodeSteps;
+    [SerializeField] private float dbg_HintFollow;
 
-    [Header("Debug - live reward breakdown (read-only, updates every step in Play mode)")]
-    [SerializeField] private float dbg_StandingStillApplied;
-    [SerializeField] private float dbg_TowardBallApplied;
-    [SerializeField] private float dbg_CenteringApplied;
-    [SerializeField] private float dbg_BackwardApplied;
-    [SerializeField] private float dbg_SideIRCriticalApplied;
-    [SerializeField] private float dbg_UltrasonicCriticalApplied;
-    [SerializeField] private float dbg_SuddenMoveApplied;
-    [SerializeField] private float dbg_GripHoldBonusApplied;
-    [SerializeField] private float dbg_GripLostApplied;
+    [Header("LiDAR Hint (симуляция подсказки от второго робота)")]
+    [SerializeField] private bool  enableLidarHint = true;
+    [SerializeField] private float hintAngleNoiseDeg = 12f;
+    [SerializeField] private float hintDistNoisePct = 0.15f;
+    [SerializeField] private float hintDecaySeconds = 5f;
+    [SerializeField] private float hintDecayPerMove = 0.5f;
+    [SerializeField] private float hintDecayPerTurn = 1.2f;
+    [Range(0f,1f)] [SerializeField] private float hintDropoutChance = 0.25f;
+    [SerializeField] private float hintAngleNorm = 90f;
 
-    [Header("Observation normalization")]
-    [SerializeField] private float timeSinceBallCap = 10f;  // s
+    [Header("Observation Normalization")]
+    [SerializeField] private float timeSinceBallCap = 10f;
 
-    // ---- Rigidbody / start poses ----
+    // --- Rigidbody y poses de inicio ---
     private Rigidbody rb;
+    private Rigidbody ballRb;
     private Vector3 startPos;
     private Quaternion startRot;
     private Quaternion cameraServoBase;
     private float ballStartY;
 
-    // ---- internal state ----
+    // --- Estado interno ---
     private float servoAngle;
     private float lastKnownBallAngle;
     private float timeSinceBall;
-    private float prevWorldDistance;
-    // Last SIGNIFICANT (|value| > suddenMoveSignificance) direction seen for each channel
-    // (-1, +1, or 0 = none recorded yet), and how many decisions ago that was. A reversal
-    // only counts as "sudden" if the opposite significant direction reappears within
-    // oscillationWindowDecisions - otherwise it's a normal, well-separated turn (e.g. went
-    // right a while ago, now going left to navigate), not left-right-left-right jitter.
-    private float lastSigGas, lastSigSteer, lastSigCam;
-    private int gasSigAge = 999999, steerSigAge = 999999, camSigAge = 999999;
-    private int episodeSteps;
-    private int gripHoldDecisions;
-    private int gripRewardTicksGranted;
-    private bool gripActivePrevFrame;
+    private float hintAngle, hintDistance, hintConfidence;
+    private bool  missionDone;
 
-    /// <summary>True when connected to the Python trainer (used later for domain randomization / ROSBridge gating).</summary>
+    // --- Éxito graduado ---
+    private int  holdTicks;
+    private bool touchRewarded;
+
+    // --- Deltas por VISIÓN (no por transform) ---
+    private float lastVisionDist = 1f;
+    private float lastServoNorm;
+    private bool  wasSeeingBallLastStep;
+    private bool  wasCloseToBall;
+    private int   blindApproachTicks;
+    private const int BLIND_APPROACH_MAX = 80;
+    private int   lastBallSeenStep = -999;
+
+    // --- Action rate ---
+    private float prevGas, prevSteer, prevCam;
+
+    // --- Anti-atasco ---
+    private Vector3 lastPosition;
+    private int stuckTimer;
+
+    private int episodeSteps;
+
     public bool IsTraining => Academy.Instance.IsCommunicatorOn;
 
-    // ============ PUBLIC API FOR BrainDebugHUD ============
+    // ================= PUBLIC API FOR BrainDebugHUD =================
     public float Obs01_Ultrasonic        { get; private set; }
     public int   Obs02_LeftIR            { get; private set; }
     public int   Obs03_RightIR           { get; private set; }
@@ -165,6 +224,9 @@ public class RobotBrain : Agent
     public float Obs13_HeadingNorm       { get; private set; }
     public float Obs14_SpeedNorm         { get; private set; }
     public float Obs15_TimeSinceBallNorm { get; private set; }
+    public float Obs16_HintAngle         { get; private set; }
+    public float Obs17_HintDistance      { get; private set; }
+    public float Obs18_HintConfidence    { get; private set; }
 
     public float ActGas       { get; private set; }
     public float ActSteer     { get; private set; }
@@ -172,9 +234,7 @@ public class RobotBrain : Agent
 
     public float StepReward       { get; private set; }
     public float CumulativeReward => GetCumulativeReward();
-    // =====================================================
-
-    private Vector3 ArenaCenter => arenaCenter != null ? arenaCenter.position : Vector3.zero;
+    // ================================================================
 
     public override void Initialize()
     {
@@ -191,167 +251,201 @@ public class RobotBrain : Agent
             var go = GameObject.FindWithTag(ballTag);
             if (go != null) ball = go.transform;
         }
-        if (ball != null) ballStartY = ball.position.y;
+        if (ball != null)
+        {
+            ballStartY = ball.position.y;
+            ballRb = ball.GetComponent<Rigidbody>();   // нужен для штрафа за СДВИГ
+        }
     }
 
     public override void OnEpisodeBegin()
     {
         episodeSteps = 0;
+        ResetEpisodeState();
 
-        // MISSION MODE: the state machine owns the world - no teleports,
-        // no ball respawn, no obstacle shuffle. Only internal counters reset.
         if (missionMode)
         {
-            lastKnownBallAngle = 0f;
-            timeSinceBall = timeSinceBallCap;
-            lastSigGas = lastSigSteer = lastSigCam = 0f;
-            gasSigAge = steerSigAge = camSigAge = 999999;
-            gripHoldDecisions = 0;
-            gripRewardTicksGranted = 0;
-            prevWorldDistance = FlatDistanceToBall();
+            CaptureLidarHint();
             return;
         }
 
-        // Competition rule: scatter the obstacle belt BEFORE spawning the ball,
-        // so the ball's overlap check sees the new obstacle positions
         if (obstacleRandomizer != null) obstacleRandomizer.Shuffle();
 
-        // Reset robot: back to spawn, with sideways jitter along its start side.
-        // Teleport through the rigidbody so PhysX state matches the new pose.
-        rb.linearVelocity = Vector3.zero;   // Unity < 6: rb.velocity
+        rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
+
         Vector3 spawn = startPos;
         if (robotSpawnJitter > 0f)
             spawn += (startRot * Vector3.right) * Random.Range(-robotSpawnJitter, robotSpawnJitter);
+
         rb.position = spawn;
-        rb.rotation = startRot;
+        rb.rotation = startRot;   // робот ВСЕГДА смотрит вперёд -> угол подсказки однозначен
         transform.SetPositionAndRotation(spawn, startRot);
 
-        // Reset camera servo
         servoAngle = 0f;
         if (cameraServo != null) cameraServo.localRotation = cameraServoBase;
 
-        // Ball spawn: random point inside finishArea's bounds if assigned, otherwise the
-        // old forward/side band ahead of the robot's start direction (competition layout).
-        if (ball != null)
-        {
-            Vector3 fwd  = startRot * Vector3.forward;
-            Vector3 side = startRot * Vector3.right;
-            float ballR = ball.localScale.x * 0.5f + 0.02f;
+        RespawnBall();
 
-            Collider finishCollider = finishArea != null ? finishArea.GetComponent<Collider>() : null;
+        lastPosition = transform.position;
+        CaptureLidarHint();
 
-            Vector3 p = ball.position; int guard = 0;
-            bool ok = false;
-            while (!ok && guard < 40)
-            {
-                guard++;
+        if (randomizer != null) randomizer.ApplyEpisodeRandomization(IsTraining);
+    }
 
-                if (finishCollider != null)
-                {
-                    Bounds fb = finishCollider.bounds;
-                    p = new Vector3(Random.Range(fb.min.x, fb.max.x), ballStartY, Random.Range(fb.min.z, fb.max.z));
-                }
-                else
-                {
-                    p = startPos
-                      + fwd  * Random.Range(ballMinForward, ballMaxForward)
-                      + side * Random.Range(-ballHalfWidth, ballHalfWidth);
-                    p.y = ballStartY;
-                    // No arena-bounds clamp here anymore - physical walls contain the
-                    // arena, so an artificial software boundary is redundant.
-                }
-
-                // not inside anything solid: allow only the floor (arenaCenter), the
-                // finish marker itself, and the ball itself
-                ok = true;
-                foreach (var col in Physics.OverlapSphere(p, ballR))
-                {
-                    if (ball != null && col.transform == ball) continue;              // the ball itself
-                    if (finishCollider != null && col == finishCollider) continue;    // the finish floor marker
-                    if (arenaCenter != null &&
-                        (col.transform == arenaCenter || col.transform.IsChildOf(arenaCenter)))
-                        continue;                                                     // the floor
-                    ok = false; break;                                                // wall / obstacle / robot
-                }
-            }
-
-            ball.position = p;
-            var brb = ball.GetComponent<Rigidbody>();
-            if (brb != null) { brb.isKinematic = false; brb.linearVelocity = Vector3.zero; brb.angularVelocity = Vector3.zero; }
-            var bcol = ball.GetComponent<Collider>();
-            if (bcol != null) bcol.enabled = true;
-        }
-
-        // Reset internal state
+    private void ResetEpisodeState()
+    {
         lastKnownBallAngle = 0f;
         timeSinceBall = timeSinceBallCap;
-        lastSigGas = lastSigSteer = lastSigCam = 0f;
-        gasSigAge = steerSigAge = camSigAge = 999999;
-        gripHoldDecisions = 0;
-        gripRewardTicksGranted = 0;
-        gripActivePrevFrame = false;
-        prevWorldDistance = FlatDistanceToBall();
+        lastVisionDist = 1f;
+        lastServoNorm = 0f;
+        wasSeeingBallLastStep = false;
+        wasCloseToBall = false;
+        blindApproachTicks = 0;
+        lastBallSeenStep = -999;
+        prevGas = prevSteer = prevCam = 0f;
+        stuckTimer = 0;
+        missionDone = false;
+        servoAngle = 0f;
+        holdTicks = 0;
+        touchRewarded = false;
+        lastPosition = transform.position;
+    }
 
-        // Domain Randomization (Practice 5): physics + latency queue reset
-        if (randomizer != null) randomizer.ApplyEpisodeRandomization(IsTraining);
+    private void RespawnBall()
+    {
+        if (ball == null) return;
+
+        Vector3 fwd  = startRot * Vector3.forward;
+        Vector3 side = startRot * Vector3.right;
+        float ballR = ball.localScale.x * 0.5f + 0.02f;
+
+        Collider finishCollider = finishArea != null ? finishArea.GetComponent<Collider>() : null;
+
+        Vector3 p = ball.position;
+        int guard = 0;
+        bool ok = false;
+
+        while (!ok && guard < 40)
+        {
+            guard++;
+
+            if (finishCollider != null)
+            {
+                Bounds fb = finishCollider.bounds;
+                p = new Vector3(Random.Range(fb.min.x, fb.max.x), ballStartY, Random.Range(fb.min.z, fb.max.z));
+            }
+            else
+            {
+                // Curriculum задаёт МАКСИМУМ. Минимум держим ниже него, иначе
+                // Random.Range(min > max) ломает "лёгкую" фазу.
+                float maxFwd = Academy.Instance.EnvironmentParameters
+                                      .GetWithDefault("ball_max_forward", ballMaxForward);
+                float minFwd = Mathf.Min(ballMinForward, maxFwd * 0.5f);
+                p = startPos
+                  + fwd  * Random.Range(minFwd, maxFwd)
+                  + side * Random.Range(-ballHalfWidth, ballHalfWidth);
+                p.y = ballStartY;
+            }
+
+            ok = true;
+            foreach (var col in Physics.OverlapSphere(p, ballR))
+            {
+                if (col.transform == ball) continue;
+                if (finishCollider != null && col == finishCollider) continue;
+                if (arenaCenter != null && (col.transform == arenaCenter || col.transform.IsChildOf(arenaCenter)))
+                    continue;
+                ok = false;
+                break;
+            }
+        }
+
+        ball.position = p;
+
+        if (ballRb == null) ballRb = ball.GetComponent<Rigidbody>();
+        if (ballRb != null)
+        {
+            ballRb.isKinematic = false;
+            ballRb.linearVelocity = Vector3.zero;
+            ballRb.angularVelocity = Vector3.zero;
+        }
+        var bcol = ball.GetComponent<Collider>();
+        if (bcol != null) bcol.enabled = true;
     }
 
     private void FixedUpdate()
     {
-        // Grows continuously; reset in CollectObservations when the ball is visible
         timeSinceBall += Time.fixedDeltaTime;
+
+        // Спад доверия к подсказке: замороженный вектор устаревает тем быстрее,
+        // чем больше робот проехал и повернул (энкодеров нет — не пересчитать).
+        if (hintConfidence > 0f)
+        {
+            float dt = Time.fixedDeltaTime;
+            float decay = dt / Mathf.Max(0.1f, hintDecaySeconds)
+                        + Mathf.Abs(ActGas)   * dt * hintDecayPerMove
+                        + Mathf.Abs(ActSteer) * dt * hintDecayPerTurn;
+            hintConfidence = Mathf.Max(0f, hintConfidence - decay);
+        }
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        // 1. Ultrasonic: take the nearer side (0 = touching .. 1 = clear)
+        // --- 1-4: датчики ---
         Obs01_Ultrasonic = sensors != null
-            ? Mathf.Min(sensors.UltrasonicLeft, sensors.UltrasonicRight)
-            : 1f;
-        if (randomizer != null)
-            Obs01_Ultrasonic = randomizer.NoisySonar(Obs01_Ultrasonic, IsTraining);
+            ? Mathf.Min(sensors.UltrasonicLeft, sensors.UltrasonicRight) : 1f;
+        if (randomizer != null) Obs01_Ultrasonic = randomizer.NoisySonar(Obs01_Ultrasonic, IsTraining);
 
-        // 2-4. IR
         Obs02_LeftIR    = sensors != null ? sensors.LeftIR : 0;
         Obs03_RightIR   = sensors != null ? sensors.RightIR : 0;
         Obs04_GripperIR = sensors != null ? sensors.GripperIR : 0;
 
-        // 5-8. Camera / YOLO. Source: real robot (Practice 7 HIL) when RealVision
-        // is assigned and switched on, otherwise the simulated camera.
+        // --- 5-8: зрение (реальный YOLO или симулированный) ---
         bool useReal = realVision != null && realVision.useYOLO;
-        bool visible = useReal ? realVision.IsVisible
-                               : (yolo != null && yolo.IsVisible);
+        bool visible  = useReal ? realVision.IsVisible : (yolo != null && yolo.IsVisible);
         float visAngle = useReal ? realVision.RelativeAngle
                                  : (yolo != null ? yolo.RelativeAngle : 0f);
         float visDist  = useReal ? realVision.NormalizedDistance
                                  : (yolo != null ? yolo.NormalizedDistance : 1f);
+
         if (randomizer != null && rb != null)
             visible = randomizer.FilterBallVisibility(visible, rb.angularVelocity.magnitude, IsTraining);
+
         Obs08_BallVisible  = visible ? 1f : 0f;
         Obs05_BallAngle    = visible ? visAngle : 0f;
         Obs06_BallDistance = visible ? visDist : 1f;
-        if (visible) { lastKnownBallAngle = visAngle; timeSinceBall = 0f; }
+
+        if (visible)
+        {
+            lastKnownBallAngle = visAngle;
+            timeSinceBall = 0f;
+            lastBallSeenStep = StepCount;
+        }
         Obs07_LastKnownAngle = lastKnownBallAngle;
 
-        // 9. Camera servo
-        Obs09_ServoAngleNorm = Mathf.Clamp(servoAngle / maxServoAngle, -1f, 1f);
-
-        // 10. Has ball: mirrors the raw GripperIR sensor directly (not the physics-only
-        // "IsHolding" state) - the real robot only ever has the raw sensor to go on.
+        // --- 9-10 ---
+        Obs09_ServoAngleNorm = Mathf.Clamp(servoAngle / Mathf.Max(1f, maxServoAngle), -1f, 1f);
         Obs10_HasBall = Obs04_GripperIR == 1 ? 1f : 0f;
 
-        // 11-14. Odometry / heading / speed
+        // --- 11-14: эгоцентрия.
+        //     ВНИМАНИЕ: на реальном GFS-X энкодеров и IMU НЕТ. Слоты оставлены
+        //     ради Space Size = 18 и совместимости с HUD. После защиты стоит
+        //     обнулить их или убрать — это чистый sim2real-риск. ---
         Vector3 displacement = transform.position - startPos;
         Obs11_DisplacementX = Mathf.Clamp(displacement.x / 3f, -1f, 1f);
         Obs12_DisplacementZ = Mathf.Clamp(displacement.z / 3f, -1f, 1f);
-        Obs13_HeadingNorm = Mathf.Repeat(transform.eulerAngles.y, 360f) / 360f;
-        Obs14_SpeedNorm = rb != null ? Mathf.Clamp01(rb.linearVelocity.magnitude / 0.5f) : 0f;
+        Obs13_HeadingNorm   = Mathf.Repeat(transform.eulerAngles.y, 360f) / 360f;
+        Obs14_SpeedNorm     = rb != null ? Mathf.Clamp01(rb.linearVelocity.magnitude / 0.5f) : 0f;
 
-        // 15. Time since last detection
-        Obs15_TimeSinceBallNorm = Mathf.Clamp01(timeSinceBall / timeSinceBallCap);
+        // --- 15 ---
+        Obs15_TimeSinceBallNorm = Mathf.Clamp01(timeSinceBall / Mathf.Max(0.1f, timeSinceBallCap));
 
-        // --- Feed strictly in the Practice 3 table order ---
+        // --- 16-18: подсказка. При confidence=0 читается как "информации нет"
+        //     (та же конвенция, что и невидимый мяч: угол 0, дистанция 1) ---
+        Obs16_HintAngle      = hintAngle * hintConfidence;
+        Obs17_HintDistance   = Mathf.Lerp(1f, hintDistance, hintConfidence);
+        Obs18_HintConfidence = hintConfidence;
+
         sensor.AddObservation(Obs01_Ultrasonic);
         sensor.AddObservation(Obs02_LeftIR);
         sensor.AddObservation(Obs03_RightIR);
@@ -367,12 +461,16 @@ public class RobotBrain : Agent
         sensor.AddObservation(Obs13_HeadingNorm);
         sensor.AddObservation(Obs14_SpeedNorm);
         sensor.AddObservation(Obs15_TimeSinceBallNorm);
+        sensor.AddObservation(Obs16_HintAngle);
+        sensor.AddObservation(Obs17_HintDistance);
+        sensor.AddObservation(Obs18_HintConfidence);
     }
 
     public override void OnActionReceived(ActionBuffers actions)
     {
         StepReward = 0f;
         episodeSteps++;
+        dbg_EpisodeSteps = episodeSteps;
 
         float gas    = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
         float steer  = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
@@ -380,54 +478,131 @@ public class RobotBrain : Agent
 
         ActGas = gas; ActSteer = steer; ActCameraCmd = camCmd;
 
-        // Domain Randomization: action latency FIFO (no-op when latency is 0)
         if (randomizer != null) randomizer.DelayActions(ref gas, ref steer, ref camCmd);
 
-        // Drive (SetCommand clamps to [-1,1] itself)
-        if (track != null) track.SetCommand(gas, steer);
+        // ================================================================
+        // ЛИМИТ ЭПИЗОДА — ПРОВЕРЯЕТСЯ САМЫМ ПЕРВЫМ (ФИКС v6.1).
+        // В v6.0 он стоял ниже защёлки, та делала return, и эпизод не
+        // завершался НИКОГДА: в логе шло "No episode was completed",
+        // так утекло 4M шагов и рухнула память.
+        // Ни один блок с return не должен стоять выше этой проверки.
+        // ================================================================
+        // Лимит берём из curriculum: далёкий мяч требует больше времени.
+        // При 0.125 м/с и мяче на 2.6 м одна дорога занимает ~21 с — в 1000
+        // шагов (20 с) агент физически не успевает доехать.
+        int episodeLimit = Mathf.RoundToInt(
+            Academy.Instance.EnvironmentParameters.GetWithDefault("episode_length", maxEpisodeSteps));
 
-        // Camera pan: rotate around the WORLD vertical axis (robust to any
-        // tilted parent hierarchy in the imported model - guarantees the pan
-        // is left/right, never up/down)
+        if (IsTraining && !missionMode && episodeSteps >= episodeLimit)
+        {
+            Add(-episodeTimeoutPenalty);
+            Academy.Instance.StatsRecorder.Add("Custom/EndTimeout", 1.0f);
+            Academy.Instance.StatsRecorder.Add("Custom/ReachSuccess", 0.0f);
+            EndEpisode();
+            return;
+        }
+
+        // ================================================================
+        // ФАЗА 0 — МЯЧ МЕЖДУ ГУБКАМИ. Ставим моторы в 0 в ЭТОТ ЖЕ шаг,
+        // чтобы робот не толкнул мяч на кадре касания.
+        // Награда СТУПЕНЧАТАЯ: касание -> удержание стоя -> полный успех.
+        // Первая крошка приходит сразу, поэтому агент не боится доводить
+        // манёвр до конца из-за редкости финальной награды.
+        // ================================================================
+        bool ballRecentlySeen = (StepCount - lastBallSeenStep) < ballSeenWindowSteps;
+        bool ballInClaw = Obs04_GripperIR == 1 && (IsTraining || ballRecentlySeen);
+
+        if (ballInClaw)
+        {
+            missionDone = true;
+
+            if (track != null) track.SetCommand(0f, 0f);
+            if (!IsTraining && rosBridge != null) rosBridge.PublishCommand(0f, 0f);
+
+            if (IsTraining && !missionMode)
+            {
+                if (!touchRewarded) { Add(touchBonus); touchRewarded = true; }
+
+                holdTicks++;
+                dbg_HoldTicks = holdTicks;
+                Add(holdStillBonus);
+
+                if (holdTicks >= holdStillSteps)
+                {
+                    Add(reachSuccessReward);
+                    Academy.Instance.StatsRecorder.Add("Custom/ReachSuccess", 1.0f);
+                    EndEpisode();
+                }
+            }
+            return;
+        }
+        holdTicks = 0;
+        dbg_HoldTicks = 0;
+
+        // Защёлка: доехали, но мяч выкатился — всё равно стоим.
+        // ТОЛЬКО В ИНФЕРЕНСЕ. При обучении она замораживала агента навсегда.
+        if (latchOnArrival && missionDone && !IsTraining)
+        {
+            if (track != null) track.SetCommand(0f, 0f);
+            if (rosBridge != null) rosBridge.PublishCommand(0f, 0f);
+            return;
+        }
+
+        // --- Анти-застревание ---
+        // ВАЖНО: застреванием считается только попытка ЕХАТЬ без перемещения.
+        // Поворот на месте — ЛЕГИТИМНАЯ центровка корпуса, а не застревание.
+        if (Mathf.Abs(gas) > 0.15f)
+        {
+            stuckTimer++;
+            if (stuckTimer >= 200)
+            {
+                if (Vector3.Distance(transform.position, lastPosition) < 0.3f
+                    && IsTraining && !missionMode)
+                {
+                    Add(-stuckPenalty);
+                    Academy.Instance.StatsRecorder.Add("Custom/EndStuck", 1.0f);
+                    Academy.Instance.StatsRecorder.Add("Custom/ReachSuccess", 0.0f);
+                    EndEpisode();
+                    return;
+                }
+                stuckTimer = 0;
+                lastPosition = transform.position;
+            }
+        }
+        else { stuckTimer = 0; lastPosition = transform.position; }
+
+        // --- Сервопривод камеры: ГОРИЗОНТАЛЬНЫЙ поворот (рыскание) ---
         servoAngle = Mathf.Clamp(servoAngle + camCmd * servoSpeed * Time.fixedDeltaTime,
                                  -maxServoAngle, maxServoAngle);
         if (cameraServo != null)
-            cameraServo.localRotation = cameraServoBase *
-                Quaternion.AngleAxis(servoAngle,
-                    cameraServo.parent != null
-                        ? cameraServo.parent.InverseTransformDirection(Vector3.up)
-                        : Vector3.up);
+        {
+            // Ось = мировая вертикаль, переведённая в пространство родителя.
+            // Так поворот всегда горизонтальный, независимо от того, как
+            // сориентирована импортированная из Blender кость камеры.
+            Vector3 yawAxis = cameraServo.parent != null
+                ? cameraServo.parent.InverseTransformDirection(Vector3.up)
+                : Vector3.up;
+            cameraServo.localRotation = Quaternion.AngleAxis(servoAngle, yawAxis) * cameraServoBase;
+        }
 
-        ComputeRewards(gas, steer, camCmd);
-
-        // --- Practice 8: bridge to the real robot (inference only) ---
+        // --- Движение ---
+        if (track != null) track.SetCommand(gas, steer);
         if (!IsTraining && rosBridge != null)
         {
             rosBridge.PublishCommand(gas, steer);
             rosBridge.PublishCameraCmd(camCmd);
-
-            bool gripActive = Obs04_GripperIR == 1;
-            if (gripActive && !gripActivePrevFrame)
-                rosBridge.PublishGripperCmd(1);
-            gripActivePrevFrame = gripActive;
         }
 
-        // --- Practice 6: diagnostic CSV log for Sim-to-Real debugging ---
-        // Logs the ACTUAL executed gas/steer/camCmd (post Domain-Randomization latency
-        // delay if a randomizer is attached), not the raw policy output in ActGas/ActSteer -
-        // this matches what the real motors would have actually received.
+        ComputeRewards(gas, steer, camCmd);
+
+        // --- CSV-логгер для диагностики sim vs real ---
         if (diagLogger != null)
         {
-            // isRetrying: no such state machine in this version - the claw is purely
-            // observational (drives are never frozen/reversed automatically on grip loss),
-            // so this is always false here. Wire it up if you add a retry FSM later.
-            bool isRetrying = false;
-
             diagLogger.LogStep(
                 StepCount,
                 Obs08_BallVisible > 0.5f, Obs05_BallAngle, Obs06_BallDistance,
                 Obs01_Ultrasonic, Obs02_LeftIR, Obs03_RightIR, Obs04_GripperIR,
-                servoAngle, gas, steer, Obs10_HasBall > 0.5f, gripHoldDecisions, isRetrying,
+                servoAngle, gas, steer, Obs10_HasBall > 0.5f, holdTicks, false,
                 transform.position.x - startPos.x, transform.position.z - startPos.z,
                 transform.eulerAngles.y / 360f, rb != null ? rb.linearVelocity.magnitude : 0f
             );
@@ -436,213 +611,302 @@ public class RobotBrain : Agent
 
     private void ComputeRewards(float gas, float steer, float camCmd)
     {
-        dbg_GripHoldBonusApplied = 0f;
-        dbg_GripLostApplied = 0f;
+        if (!IsTraining || missionMode) return;
 
-        // ---- Claw hold tracking: purely observational - driving is NEVER frozen while
-        // the sensor is active. Flat, fixed bonus per tick (NOT a % of cumulative reward -
-        // avoids exponential growth and removes any incentive to stall/inflate a baseline
-        // before grabbing, since the bonus no longer depends on prior accumulated reward).
-        bool gripActive = Obs04_GripperIR == 1;
-        if (gripActive)
-        {
-            if (!missionMode)
-            {
-                gripHoldDecisions++;
-                int ticksReached = gripHoldDecisions / gripRewardIntervalDecisions;
-                while (gripRewardTicksGranted < ticksReached)
-                {
-                    gripRewardTicksGranted++;
-                    Add(gripHoldTickBonus);
-                    dbg_GripHoldBonusApplied += gripHoldTickBonus;
-                }
+        bool  ballVisible = Obs08_BallVisible > 0.5f;
+        float currentDist = Obs06_BallDistance;   // НОРМИРОВАННАЯ дистанция от зрения (0..1)
+        float camAngle    = Obs05_BallAngle;      // мяч в кадре, от оси КАМЕРЫ
+        float servoNorm   = Obs09_ServoAngleNorm; // насколько камера отвёрнута от корпуса
+        bool  gripperSees = Obs04_GripperIR == 1;
 
-                if (gripHoldDecisions >= gripHoldMaxDecisions)
-                {
-                    EndEpisode();   // success
-                    return;
-                }
-            }
-        }
-        else
-        {
-            // Sensor was active and just dropped before reaching success - the ball
-            // touched the claw and was lost before the hold completed. Flat penalty,
-            // same fixed scale as the hold-tick bonus (not tied to cumulative reward).
-            if (gripHoldDecisions > 0 && !missionMode)
-            {
-                Add(-gripLostPenalty);
-                dbg_GripLostApplied = -gripLostPenalty;
-            }
-            gripHoldDecisions = 0;
-            gripRewardTicksGranted = 0;
-        }
+        dbg_ServoNorm = servoNorm;
+        dbg_Approach = 0f;
+        dbg_Centering = 0f;
+        dbg_AlignFactor = 1f;
 
-        // Real, occlusion-aware visibility - Obs08_BallVisible already went through
-        // SimulatedYoloCamera's raycast line-of-sight check (or RealVision on hardware),
-        // so this means "actually seen", not just "somewhere in the FOV cone through a wall".
-        bool ballVisible = Obs08_BallVisible > 0.5f;
-        float dist = ball != null ? FlatDistanceToBall() : float.MaxValue;
-
-        // Ground-truth world distance must never leak into reward while the robot can't
-        // actually see the ball - otherwise driving blind gets rewarded/punished for a
-        // distance change it has no way of perceiving. Only compared/updated on steps
-        // where the ball is actually visible.
-        bool movingToward = false;
-        if (ball != null && ballVisible)
-        {
-            movingToward = dist < prevWorldDistance;
-            prevWorldDistance = dist;
-        }
-
-        // --- Standing still: flat penalty. Moving forward alone gives nothing (0). ---
-        bool standingStill = Mathf.Abs(gas) <= 0.0001f;
-        if (standingStill)
-        {
-            Add(-standingStillPenalty);
-            dbg_StandingStillApplied = -standingStillPenalty;
-        }
-        else
-        {
-            dbg_StandingStillApplied = 0f;
-        }
-
-        // --- Backward: flat penalty, graded by whether the ball is visible right now ---
-        if (gas < 0f)
-        {
-            float penalty = ballVisible ? backwardVisiblePenalty : backwardBlindPenalty;
-            Add(-penalty);
-            dbg_BackwardApplied = -penalty;
-        }
-        else
-        {
-            dbg_BackwardApplied = 0f;
-        }
-
-        // --- Toward ball: flat reward, only counted while the ball is actually visible ---
-        if (movingToward)
-        {
-            Add(towardBallReward);
-            dbg_TowardBallApplied = towardBallReward;
-        }
-        else
-        {
-            dbg_TowardBallApplied = 0f;
-        }
-
-        // --- Centering: flat-scaled formula, only while visible ---
         if (ballVisible)
         {
-            float centering = centeringRewardScale * (1f - Mathf.Abs(Obs09_ServoAngleNorm)) * (1f - Mathf.Abs(Obs05_BallAngle));
-            Add(centering);
-            dbg_CenteringApplied = centering;
+            // Первый кадр после появления мяча — без дельты (иначе спайк)
+            if (!wasSeeingBallLastStep)
+            {
+                lastVisionDist = currentDist;
+                lastServoNorm  = servoNorm;
+            }
+
+            blindApproachTicks = 0;
+
+            if (wasSeeingBallLastStep)
+            {
+                // ===== R1: DISTANCE DELTA (пропорциональная) =====
+                float delta = lastVisionDist - currentDist;      // >0 = приблизился
+                if (Mathf.Abs(delta) < approachSpikeFilter)
+                {
+                    // Чем ближе мяч — тем важнее точность: 2.0x далеко ... 6.0x вплотную
+                    float proximityMultiplier = 2.0f + 4.0f * (1.0f - Mathf.Clamp01(currentDist));
+
+                    // ===== ДВОЙНЫЕ ВОРОТА: "ЕДЕТ ПРЯМО НА МЯЧ" =====
+                    // Условие 1: мяч по центру кадра.
+                    // Условие 2: камера НЕ отвёрнута сервоприводом.
+                    // Оба сразу означают, что КОРПУС смотрит на мяч. Одного
+                    // первого мало: робот центровал мяч поворотом камеры и ехал
+                    // физически боком — отсюда круги вокруг мяча.
+                    float alignFactor = 1f;
+                    if (currentDist < alignRequiredDist)
+                    {
+                        float camCenter = 1f - Mathf.Clamp01(Mathf.Abs(camAngle)
+                                                           / Mathf.Max(0.01f, alignTolerance));
+                        float servoCenter = 1f - Mathf.Clamp01(Mathf.Abs(servoNorm)
+                                                             / Mathf.Max(0.01f, servoTolerance));
+                        alignFactor = camCenter * servoCenter;
+                    }
+                    dbg_AlignFactor = alignFactor;
+
+                    // Отдаление штрафуем ПОЛНОСТЬЮ, без скидки за перекос,
+                    // иначе выгодно отъезжать боком (обход ворот).
+                    float r = (delta > 0f)
+                        ? delta * approachScale * proximityMultiplier * alignFactor
+                        : delta * approachScale * proximityMultiplier;
+                    Add(r);
+                    dbg_Approach = r;
+                }
+
+                // ===== ДОВОДКА: возврат камеры к центру при видимом мяче =====
+                // Единственный способ вернуть камеру в ноль, не теряя мяч из
+                // виду, — довернуть КОРПУС к мячу. Работает на любой дистанции.
+                float servoDelta = Mathf.Abs(lastServoNorm) - Mathf.Abs(servoNorm);
+                if (Mathf.Abs(servoDelta) < 0.5f)
+                {
+                    float rc = servoDelta * servoCenteringScale;
+                    Add(rc);
+                    dbg_Centering = rc;
+                }
+            }
+
+            // ===== R3: медленный и ровный подъезд =====
+            if (currentDist < 0.30f && gas > 0.01f && gas < 0.30f) Add(slowDownBonus);
+            if (currentDist < 0.25f && Mathf.Abs(gas) > 0.40f)     Add(-tooFastPenalty);
+            // Бонус за "едет прямо": и мяч, и камера по центру
+            if (currentDist < 0.40f && Mathf.Abs(camAngle) < 0.15f && Mathf.Abs(servoNorm) < 0.15f)
+                Add(alignBonus);
+
+            wasCloseToBall = currentDist <= 0.35f;
+            lastVisionDist = currentDist;
+            lastServoNorm  = servoNorm;
+            wasSeeingBallLastStep = true;
         }
         else
         {
-            dbg_CenteringApplied = 0f;
+            // Мяч не виден. Если был рядом и ещё не в клешне — он в слепой зоне
+            // камеры прямо перед роботом: платим за медленное движение ВПЕРЁД,
+            // иначе агент выбирает "безопасный" задний ход и теряет мяч.
+            if (wasCloseToBall && !gripperSees)
+            {
+                blindApproachTicks++;
+                if (gas > 0.01f && gas < 0.30f) Add(blindCrawlBonus);
+                if (blindApproachTicks >= BLIND_APPROACH_MAX)
+                {
+                    wasCloseToBall = false;
+                    blindApproachTicks = 0;
+                }
+            }
+
+            // ===== СЛЕДОВАНИЕ ПОДСКАЗКЕ =====
+            // Дальность камеры ~0.8 м, а мяч на турнире будет в 2-3 м: слепой
+            // участок — ОСНОВНАЯ часть задачи, а весь остальной сигнал живёт
+            // внутри if(ballVisible). Без этой награды агент ищет мяч чисто
+            // случайно. Платим за движение ВПЕРЁД вдоль вектора подсказки,
+            // и только пока доверие к ней живо.
+            dbg_HintFollow = 0f;
+            if (hintConfidence > 0.05f && gas > 0f)
+            {
+                float hintErr = Mathf.Abs(Obs16_HintAngle);
+                float aligned = 1f - Mathf.Clamp01(hintErr / Mathf.Max(0.01f, hintFollowTolerance));
+                float r = aligned * gas * hintFollowScale;
+                Add(r);
+                dbg_HintFollow = r;
+            }
+
+            lastVisionDist = 1f;
+            wasSeeingBallLastStep = false;
         }
 
-        // --- Critical wall proximity: flat penalties, independent of movement and of each
-        // other (both triggering the same step just adds both penalties, no compounding).
+        // ===== R4: штрафы по ДАТЧИКАМ (есть и на реальном роботе) =====
+        dbg_Sonar = 0f;
+        if (Obs01_Ultrasonic < sonarThreshold)
+        {
+            float prox = 1f - (Obs01_Ultrasonic / Mathf.Max(0.001f, sonarThreshold));
+            Add(-sonarPenalty * prox);
+            dbg_Sonar = -sonarPenalty * prox;
+        }
+
+        dbg_SideIR = 0f;
         if (Obs02_LeftIR == 1 || Obs03_RightIR == 1)
         {
-            Add(-sideIRCriticalPenalty);
-            dbg_SideIRCriticalApplied = -sideIRCriticalPenalty;
-        }
-        else
-        {
-            dbg_SideIRCriticalApplied = 0f;
+            Add(-sideIrPenalty);
+            dbg_SideIR = -sideIrPenalty;
         }
 
-        if (Obs01_Ultrasonic < ultrasonicCriticalThreshold)
+        // ===== R5: гладкость (стандарт NVIDIA Isaac Lab) =====
+        float actionRate = Mathf.Pow(gas - prevGas, 2)
+                         + Mathf.Pow(steer - prevSteer, 2)
+                         + Mathf.Pow(camCmd - prevCam, 2);
+        Add(-actionRatePenalty * actionRate);
+        dbg_ActionRate = -actionRatePenalty * actionRate;
+
+        // Мягкий штраф за задний ход, кроме случая "жмёмся к стене"
+        dbg_Backward = 0f;
+        if (gas < -0.1f)
         {
-            Add(-ultrasonicCriticalPenalty);
-            dbg_UltrasonicCriticalApplied = -ultrasonicCriticalPenalty;
-        }
-        else
-        {
-            dbg_UltrasonicCriticalApplied = 0f;
+            bool nearWall = Obs01_Ultrasonic < sonarThreshold;
+            bool nearSide = Obs02_LeftIR == 1 || Obs03_RightIR == 1;
+            if (!nearWall && !nearSide)
+            {
+                Add(-reversePenalty);
+                dbg_Backward = -reversePenalty;
+            }
         }
 
-        // --- Sudden move penalty: covers motors (gas/steer) AND the camera servo command.
-        // Compares against the last SIGNIFICANT direction per channel (|value| >
-        // suddenMoveSignificance), not the immediately preceding step - a raw step-to-step
-        // comparison misses oscillation that ramps gradually through zero (e.g. steer/gas
-        // driven by Input.GetAxis smoothing in Heuristic, or a smooth policy output), since
-        // every individual small step during the ramp has a tiny delta.
-        //
-        // A reversal only counts as "sudden" if the opposite significant direction shows up
-        // within oscillationWindowDecisions of the last one (*Age tracks decisions since the
-        // channel was last significant, of EITHER sign). Otherwise a normal turn taken long
-        // after the previous one (e.g. went right a while ago, now going left to navigate)
-        // would get flagged just for being opposite - it isn't oscillation, just driving.
-        gasSigAge++; steerSigAge++; camSigAge++;
-        bool suddenMove = false;
-
-        if (Mathf.Abs(gas) > suddenMoveSignificance)
+        // ===== R7: "ползание" — газ ниже порога считается стоянием =====
+        // Закрывает дыру: gas=0.05 -> штрафа нет и движения тоже нет.
+        dbg_StandingStill = 0f;
+        if (Mathf.Abs(gas) < standingStillGasThreshold)
         {
-            float sign = Mathf.Sign(gas);
-            if (lastSigGas != 0f && sign != lastSigGas && gasSigAge <= oscillationWindowDecisions) suddenMove = true;
-            lastSigGas = sign;
-            gasSigAge = 0;
-        }
-        if (Mathf.Abs(steer) > suddenMoveSignificance)
-        {
-            float sign = Mathf.Sign(steer);
-            if (lastSigSteer != 0f && sign != lastSigSteer && steerSigAge <= oscillationWindowDecisions) suddenMove = true;
-            lastSigSteer = sign;
-            steerSigAge = 0;
-        }
-        if (Mathf.Abs(camCmd) > suddenMoveSignificance)
-        {
-            float sign = Mathf.Sign(camCmd);
-            if (lastSigCam != 0f && sign != lastSigCam && camSigAge <= oscillationWindowDecisions) suddenMove = true;
-            lastSigCam = sign;
-            camSigAge = 0;
+            Add(-standingStillPenalty);
+            dbg_StandingStill = -standingStillPenalty;
         }
 
-        if (suddenMove)
+        prevGas = gas; prevSteer = steer; prevCam = camCmd;
+
+        // ===== Диагностика в TensorBoard =====
+        Academy.Instance.StatsRecorder.Add("Custom/Gas", gas);
+        Academy.Instance.StatsRecorder.Add("Custom/IsReverse", gas < -0.1f ? 1f : 0f);
+        Academy.Instance.StatsRecorder.Add("Custom/BallVisible", Obs08_BallVisible);
+        Academy.Instance.StatsRecorder.Add("Custom/HintConf", Obs18_HintConfidence);
+        // Метрики центровки пишем ТОЛЬКО при видимом мяче, иначе они мерят
+        // холостой скан камеры и превращаются в шум.
+        if (ballVisible)
         {
-            Add(-suddenMovePenalty);
-            dbg_SuddenMoveApplied = -suddenMovePenalty;
+            Academy.Instance.StatsRecorder.Add("Custom/ServoAbs", Mathf.Abs(servoNorm));
+            Academy.Instance.StatsRecorder.Add("Custom/CamAngleAbs", Mathf.Abs(camAngle));
         }
-        else
-        {
-            dbg_SuddenMoveApplied = 0f;
-        }
+    }
 
-        // --- Terminal conditions ---
-        // (Success is handled by the claw hold tracking at the top of this method.
-        // No out-of-bounds check here - the arena is physically walled in.)
+    /// <summary>
+    /// Анти-снегоуборщик v6: штрафуем не КАСАНИЕ, а СДВИГ мяча.
+    ///
+    /// Плотный штраф за любой контакт усваивается быстрее редкой награды за
+    /// успех, и агент выучивает "рядом с мячом = боль" раньше, чем "мяч в
+    /// клешне = награда" — то есть боится подъезжать вплотную. Физически же
+    /// запретить надо именно ТОЛЧОК: аккуратно коснуться, не сдвинув мяч,
+    /// это ровно то поведение, которое нам нужно.
+    /// </summary>
+    private void OnCollisionStay(Collision c)
+    {
+        dbg_BallPush = 0f;
+        if (!IsTraining || missionMode) return;
+        if (!c.collider.CompareTag(ballTag)) return;
+        if (Obs04_GripperIR == 1) return;   // контакт в зоне клешни легитимен
 
-        // Mission mode: the FSM owns the mission - never terminate episodes.
-        if (missionMode) return;
+        float ballSpeed = ballRb != null ? ballRb.linearVelocity.magnitude : 1f;
+        dbg_BallSpeed = ballSpeed;
+        if (ballSpeed < ballPushSpeedThreshold) return;   // лёгкое касание — без штрафа
 
-        // Time up: truncate without a big penalty so the episode always resets.
-        if (episodeSteps >= maxEpisodeSteps)
-            EndEpisode();
+        float k = Mathf.Clamp01(ballSpeed / Mathf.Max(0.01f, ballPushSpeedNorm));
+        Add(-ballPushPenalty * k);
+        dbg_BallPush = -ballPushPenalty * k;
     }
 
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var cont = actionsOut.ContinuousActions;
-        // GetAxis (smoothed), not GetAxisRaw: raw instant -1/0/+1 made manual keyboard
-        // driving violently bang-bang (visibly shaking left-right from the robot's own
-        // camera). This only affects Heuristic/manual testing - during actual training the
-        // policy's continuous outputs never go through Input Manager at all, so the sudden-
-        // move detection still works correctly for real training regardless of this.
-        cont[0] = Input.GetAxis("Vertical");     // W/S -> gas
-        cont[1] = Input.GetAxis("Horizontal");   // A/D -> steer
-        cont[2] = (Input.GetKey(KeyCode.E) ? 1f : 0f) - (Input.GetKey(KeyCode.Q) ? 1f : 0f); // Q/E -> camera
+
+        float gas = 0f, steer = 0f, cam = 0f;
+
+        bool  sees      = Obs08_BallVisible > 0.5f;
+        float camAngle  = Obs05_BallAngle;
+        float dist      = Obs06_BallDistance;
+        float servoNorm = Obs09_ServoAngleNorm;
+
+        if (Obs04_GripperIR == 1)
+        {
+            gas = 0f; steer = 0f;                       // мяч между губками -> стоп
+        }
+        else if (!sees)
+        {
+            // Мяч рождается ВПЕРЕДИ и обычно просто заслонён препятствием.
+            // Разворот на месте бесполезен — надо ЕХАТЬ и объезжать.
+            float t = Time.time;
+            cam = Mathf.Sin(t * 1.2f) * 0.9f;           // широкий скан камерой
+
+            if (Obs18_HintConfidence > 0.05f)
+            {
+                steer = Mathf.Clamp(Obs16_HintAngle * 1.5f, -1f, 1f);
+                gas = 0.35f;
+            }
+            else
+            {
+                steer = Mathf.Sin(t * 0.25f) * 0.4f;
+                gas = 0.30f;
+            }
+
+            // Объезд препятствия по датчикам
+            if (Obs01_Ultrasonic < 0.15f)      { gas = 0.10f; steer =  0.7f; }
+            else if (Obs02_LeftIR == 1)        { steer =  0.5f; }
+            else if (Obs03_RightIR == 1)       { steer = -0.5f; }
+        }
+        else
+        {
+            // Камеру ВОЗВРАЩАЕМ к центру, а доворачиваем КОРПУСОМ.
+            cam = Mathf.Lerp(servoNorm, 0f, Time.deltaTime * 3f);
+            float turn = camAngle + servoNorm;          // куда доворачивать корпус
+
+            if (Mathf.Abs(turn) > 0.15f)
+            {
+                gas = dist < alignRequiredDist ? 0.05f : 0.25f;
+                steer = Mathf.Clamp(turn * 0.8f, -1f, 1f);
+            }
+            else if (dist > 0.16f) { gas = 0.45f; steer = turn * 0.5f; }
+            else                   { gas = 0.20f; steer = turn * 0.5f; }
+        }
+
+        if (cont.Length > 0) cont[0] = gas;
+        if (cont.Length > 1) cont[1] = steer;
+        if (cont.Length > 2) cont[2] = cam;
+
+        // Аварийный перехват: зажми LEFT SHIFT для ручного WASD
+        if (Input.GetKey(KeyCode.LeftShift))
+        {
+            if (cont.Length > 0) cont[0] = Input.GetAxis("Vertical");
+            if (cont.Length > 1) cont[1] = Input.GetAxis("Horizontal");
+            if (cont.Length > 2)
+            {
+                if (Input.GetKey(KeyCode.Q)) cont[2] = -1f;
+                else if (Input.GetKey(KeyCode.E)) cont[2] = 1f;
+            }
+        }
     }
 
-    // ---- helpers ----
-    private float FlatDistanceToBall()
+    /// <summary>
+    /// Замер "ЛиДАРа" в момент старта эпизода. Робот всегда стартует лицом
+    /// вперёд, поэтому угол однозначен. Значение ЗАМОРАЖИВАЕТСЯ: одометрии
+    /// нет, обновлять его нечем — можно только терять доверие.
+    /// </summary>
+    private void CaptureLidarHint()
     {
-        if (ball == null) return 0f;
-        Vector3 a = transform.position; a.y = 0f;
-        Vector3 b = ball.position;      b.y = 0f;
-        return Vector3.Distance(a, b);
+        hintAngle = 0f; hintDistance = 1f; hintConfidence = 0f;
+        if (!enableLidarHint || ball == null) return;
+        if (Random.value < hintDropoutChance) return;   // эпизод без подсказки
+
+        Vector3 to = ball.position - transform.position; to.y = 0f;
+
+        float ang = Vector3.SignedAngle(transform.forward, to, Vector3.up)
+                  + Random.Range(-hintAngleNoiseDeg, hintAngleNoiseDeg);
+        hintAngle = Mathf.Clamp(ang / Mathf.Max(1f, hintAngleNorm), -1f, 1f);
+
+        float d = to.magnitude * (1f + Random.Range(-hintDistNoisePct, hintDistNoisePct));
+        hintDistance = Mathf.Clamp01(d / 3.5f);
+
+        hintConfidence = 1f;
     }
 
     private void Add(float r) { AddReward(r); StepReward += r; }

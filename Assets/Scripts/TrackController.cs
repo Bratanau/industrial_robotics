@@ -30,8 +30,8 @@ public class TrackController : MonoBehaviour
     [Tooltip("Минимальный стартовый PWM, если сигнал выше мёртвой зоны")]
     [SerializeField] private float minMotorPwm = 35f;
 
-    [Tooltip("Максимальное изменение PWM за один физический тик (плавный разгон)")]
-    [SerializeField] private float maxPwmStep = 15f;
+    //[Tooltip("Максимальное изменение PWM за один физический тик (плавный разгон)")]
+    //[SerializeField] private float maxPwmStep = 15f;
 
     [Header("Калибровка м/с → PWM")]
     [Tooltip("Масштабный коэффициент перехода м/с → PWM (%). Референс = 200")]
@@ -90,9 +90,9 @@ public class TrackController : MonoBehaviour
         float leftPwmTarget  = ApplyDeadzone(leftPwmRaw);
         float rightPwmTarget = ApplyDeadzone(rightPwmRaw);
 
-        // 4. Плавный разгон: ограничиваем изменение PWM за тик
-        currentLeftPwm  = Mathf.MoveTowards(currentLeftPwm,  leftPwmTarget,  maxPwmStep);
-        currentRightPwm = Mathf.MoveTowards(currentRightPwm, rightPwmTarget, maxPwmStep);
+	// 4
+	currentLeftPwm  = leftPwmTarget;
+	currentRightPwm = rightPwmTarget;
 
         // 5. Обратно PWM -> эффективная м/с для каждой гусеницы
         float leftEff  = currentLeftPwm  / speedToPwm;

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.MLAgents;
 
 /// <summary>
 /// Domain Randomization module (Practice 5), kept in its own component so the
@@ -83,7 +84,17 @@ public class DomainRandomizer : MonoBehaviour
     // ================= Hook 1: call from OnEpisodeBegin =================
     public void ApplyEpisodeRandomization(bool isTraining)
     {
-        // Latency queue must be (re)initialized every episode either way
+        // --- LECTURA DE RUIDO DESDE EL YAML ---
+        // 0 = Off (Fases 0 a 5), 1 = On (Fase 6 Sim2Real)
+        float noiseParam = Academy.Instance.EnvironmentParameters.GetWithDefault("sim2real_noise", 0f);
+        
+        // El master switch o las opciones de vision/sonar se adaptan al parametro
+        bool allowNoise = noiseParam > 0.5f;
+        
+        // Ajustar dinámicamente los toggles de visión/sensor para la fase actual
+        sonarNoise = allowNoise;
+        yoloDropout = allowNoise;
+
         InitLatencyQueue(isTraining);
         burstDropoutRemaining = 0;
 

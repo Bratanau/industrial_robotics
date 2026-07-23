@@ -54,6 +54,9 @@ public class BrainDebugHUD : MonoBehaviour
         sb.AppendLine(Row(" 9 ServoAngle     ", Fmt(brain.Obs09_ServoAngleNorm),    "white"));
         sb.AppendLine(Row("10 HasBall        ", Fmt0(brain.Obs10_HasBall),          brain.Obs10_HasBall > 0.5f ? "lime" : "gray"));
         sb.AppendLine(Row("15 TimeSinceBall  ", Fmt(brain.Obs15_TimeSinceBallNorm), "white"));
+        sb.AppendLine(Row("16 HintAngle      ", Fmt(brain.Obs16_HintAngle),      "yellow"));
+        sb.AppendLine(Row("17 HintDistance   ", Fmt(brain.Obs17_HintDistance),   "yellow"));
+        sb.AppendLine(Row("18 HintConf       ", Fmt(brain.Obs18_HintConfidence), "yellow"));
 
         sb.AppendLine();
         sb.AppendLine("<b>ACTIONS</b>");
