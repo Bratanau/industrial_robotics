@@ -166,7 +166,12 @@ public class DomainRandomizer : MonoBehaviour
 
     private void InitLatencyQueue(bool isTraining)
     {
-        currentLatency = (Active(isTraining) && actionLatency)
+        // Задержка нужна И В ИНФЕРЕНСЕ: политика училась управлять с лагом
+        // 8-14 шагов и компенсирует его упреждением. Без задержки она
+        // перерегулирует — робота "мотает" и он врезается.
+        // На реальном роботе лаг ROS-топиков есть всегда, так что это ещё и
+        // ближе к железу, чем мгновенная реакция.
+        currentLatency = (enableRandomization && actionLatency)
             ? Random.Range(latencySteps.x, latencySteps.y)
             : 0;
 
