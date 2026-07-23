@@ -26,3 +26,4 @@
 - `Assets/Scripts/TrackController.cs` — движение
 - `Assets/Scripts/VirtualSensors.cs` — датчики
 - `Assets/Scripts/GripperController.cs` — клешня
+![alt text](<Screenshot 2026-07-20 121015.png>)
